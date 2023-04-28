@@ -400,6 +400,7 @@ func openKeyValueDatabase(o OpenOptions) (ethdb.Database, error) {
 // The passed o.AncientDir indicates the path of root ancient directory where
 // the chain freezer can be opened.
 func Open(o OpenOptions) (ethdb.Database, error) {
+	//根据配置打开文件数据库 leveldb 或者 pebbledb
 	kvdb, err := openKeyValueDatabase(o)
 	if err != nil {
 		return nil, err
@@ -407,6 +408,7 @@ func Open(o OpenOptions) (ethdb.Database, error) {
 	if len(o.AncientsDirectory) == 0 {
 		return kvdb, nil
 	}
+	//构建带有冷数据自动落盘的数据库
 	frdb, err := NewDatabaseWithFreezer(kvdb, o.AncientsDirectory, o.Namespace, o.ReadOnly)
 	if err != nil {
 		kvdb.Close()

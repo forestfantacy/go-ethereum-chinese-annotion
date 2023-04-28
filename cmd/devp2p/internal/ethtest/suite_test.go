@@ -78,6 +78,7 @@ func TestSnapSuite(t *testing.T) {
 
 // runGeth creates and starts a geth node
 func runGeth() (*node.Node, error) {
+	//根据配置和网络构建1个节点
 	stack, err := node.New(&node.Config{
 		P2P: p2p.Config{
 			ListenAddr:  "127.0.0.1:0",
@@ -90,11 +91,13 @@ func runGeth() (*node.Node, error) {
 		return nil, err
 	}
 
+	//初始化节点
 	err = setupGeth(stack)
 	if err != nil {
 		stack.Close()
 		return nil, err
 	}
+	//启动节点
 	if err = stack.Start(); err != nil {
 		stack.Close()
 		return nil, err
@@ -103,11 +106,13 @@ func runGeth() (*node.Node, error) {
 }
 
 func setupGeth(stack *node.Node) error {
+	//从文件中加载区块链
 	chain, err := loadChain(halfchainFile, genesisFile)
 	if err != nil {
 		return err
 	}
 
+	//构建eth全节点：指定创世纪区块
 	backend, err := eth.New(stack, &ethconfig.Config{
 		Genesis:                 &chain.genesis,
 		NetworkId:               chain.genesis.Config.ChainID.Uint64(), // 19763
@@ -123,6 +128,7 @@ func setupGeth(stack *node.Node) error {
 		return err
 	}
 
+	//插入所有的区块
 	_, err = backend.BlockChain().InsertChain(chain.blocks[1:])
 	return err
 }

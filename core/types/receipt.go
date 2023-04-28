@@ -51,12 +51,16 @@ const (
 // Receipt represents the results of a transaction.
 type Receipt struct {
 	// Consensus fields: These fields are defined by the Yellow Paper
-	Type              uint8  `json:"type,omitempty"`
-	PostState         []byte `json:"root"`
-	Status            uint64 `json:"status"`
+	Type uint8 `json:"type,omitempty"`
+	//交易后的状态
+	PostState []byte `json:"root"`
+	Status    uint64 `json:"status"`
+	//交易真实发生的gas
 	CumulativeGasUsed uint64 `json:"cumulativeGasUsed" gencodec:"required"`
-	Bloom             Bloom  `json:"logsBloom"         gencodec:"required"`
-	Logs              []*Log `json:"logs"              gencodec:"required"`
+	//用于快速查询交易，日志的索引结构
+	Bloom Bloom `json:"logsBloom"         gencodec:"required"`
+	//交易过程中的日志
+	Logs []*Log `json:"logs"              gencodec:"required"`
 
 	// Implementation fields: These fields are added by geth when processing a transaction.
 	TxHash            common.Hash    `json:"transactionHash" gencodec:"required"`
@@ -66,9 +70,12 @@ type Receipt struct {
 
 	// Inclusion information: These fields provide information about the inclusion of the
 	// transaction corresponding to this receipt.
-	BlockHash        common.Hash `json:"blockHash,omitempty"`
-	BlockNumber      *big.Int    `json:"blockNumber,omitempty"`
-	TransactionIndex uint        `json:"transactionIndex"`
+	//交易所在区块hash
+	BlockHash common.Hash `json:"blockHash,omitempty"`
+	//交易所在区块高度
+	BlockNumber *big.Int `json:"blockNumber,omitempty"`
+	//交易在区块中的索引号
+	TransactionIndex uint `json:"transactionIndex"`
 }
 
 type receiptMarshaling struct {

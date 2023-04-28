@@ -38,6 +38,7 @@ import (
 var (
 	testAddr = common.HexToAddress("b94f5374fce5edbc8e2a8697c15331677e6ebf0b")
 
+	//空交易
 	emptyTx = NewTransaction(
 		0,
 		common.HexToAddress("095e7baea6a6c7c4c2dfeb977efac326af552d87"),
@@ -45,6 +46,7 @@ var (
 		nil,
 	)
 
+	//带签名交易
 	rightvrsTx, _ = NewTransaction(
 		3,
 		testAddr,
@@ -57,6 +59,7 @@ var (
 		common.Hex2Bytes("98ff921201554726367d2be8c804a7ff89ccf285ebc57dff8ae4c44b9c19ac4a8887321be575c8095f789dd4c743dfe42c1820f9231f98a962b210e3ac2452a301"),
 	)
 
+	//AccessListTx类型交易
 	emptyEip2718Tx = NewTx(&AccessListTx{
 		ChainID:  big.NewInt(1),
 		Nonce:    3,
@@ -73,6 +76,7 @@ var (
 	)
 )
 
+// 反序列化构建空交易
 func TestDecodeEmptyTypedTx(t *testing.T) {
 	input := []byte{0x80}
 	var tx Transaction
