@@ -124,12 +124,14 @@ func TestServerListen(t *testing.T) {
 }
 
 func TestServerDial(t *testing.T) {
-	// run a one-shot TCP server to handle the connection.
+	// 定义本地端口监听器
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("could not setup listener: %v", err)
 	}
 	defer listener.Close()
+
+	//处理通道的accepted状态
 	accepted := make(chan net.Conn, 1)
 	go func() {
 		conn, err := listener.Accept()
@@ -139,9 +141,11 @@ func TestServerDial(t *testing.T) {
 		accepted <- conn
 	}()
 
-	// start the server
+	// 初始化管道
 	connected := make(chan *Peer)
+	//初始化公钥、私钥
 	remid := &newkey().PublicKey
+	//指定公钥、接收管道构建server
 	srv := startTestServer(t, remid, func(p *Peer) { connected <- p })
 	defer close(connected)
 	defer srv.Stop()
@@ -167,6 +171,7 @@ func TestServerDial(t *testing.T) {
 				t.Errorf("peer started with wrong conn: got %v, want %v",
 					peer.RemoteAddr(), conn.LocalAddr())
 			}
+			//所有已连接的对端节点
 			peers := srv.Peers()
 			if !reflect.DeepEqual(peers, []*Peer{peer}) {
 				t.Errorf("Peers mismatch: got %v, want %v", peers, []*Peer{peer})

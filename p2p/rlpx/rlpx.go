@@ -128,15 +128,17 @@ func (c *Conn) SetDeadline(time time.Time) error {
 
 // Read reads a message from the connection.
 // The returned data buffer is valid until the next call to Read.
+// 从网络连接读到原始数据流，解析成协议数据结构
 func (c *Conn) Read() (code uint64, data []byte, wireSize int, err error) {
 	if c.session == nil {
 		panic("can't ReadMsg before handshake")
 	}
-
+	//以frame为单位的数据
 	frame, err := c.session.readFrame(c.conn)
 	if err != nil {
 		return 0, nil, 0, err
 	}
+	//解析出code、data
 	code, data, err = rlp.SplitUint64(frame)
 	if err != nil {
 		return 0, nil, 0, fmt.Errorf("invalid message code: %v", err)
@@ -144,6 +146,7 @@ func (c *Conn) Read() (code uint64, data []byte, wireSize int, err error) {
 	wireSize = len(data)
 
 	// If snappy is enabled, verify and decompress message.
+	//snappy模式，继续解析data
 	if c.snappyReadBuffer != nil {
 		var actualSize int
 		actualSize, err = snappy.DecodedLen(data)
@@ -297,6 +300,11 @@ func (m *hashMAC) compute(sum1, seed []byte) []byte {
 
 // Handshake performs the handshake. This must be called before any data is written
 // or read from the connection.
+/**
+输入当前节点私钥，
+	协商过程
+输出对端节点公钥
+*/
 func (c *Conn) Handshake(prv *ecdsa.PrivateKey) (*ecdsa.PublicKey, error) {
 	var (
 		sec Secrets
@@ -304,13 +312,16 @@ func (c *Conn) Handshake(prv *ecdsa.PrivateKey) (*ecdsa.PublicKey, error) {
 		h   handshakeState
 	)
 	if c.dialDest != nil {
+		//发起端
 		sec, err = h.runInitiator(c.conn, prv, c.dialDest)
 	} else {
+		//接收端
 		sec, err = h.runRecipient(c.conn, prv)
 	}
 	if err != nil {
 		return nil, err
 	}
+	//将秘钥封装到session
 	c.InitWithSecrets(sec)
 	c.session.rbuf = h.rbuf
 	c.session.wbuf = h.wbuf
@@ -409,35 +420,48 @@ type authRespV4 struct {
 
 // runRecipient negotiates a session token on conn.
 // it should be called on the listening side of the connection.
-//
+// 协商过程：read auth ，write resp，消息加密，状态数据在 handshakeState
 // prv is the local client's private key.
 func (h *handshakeState) runRecipient(conn io.ReadWriter, prv *ecdsa.PrivateKey) (s Secrets, err error) {
 	authMsg := new(authMsgV4)
+	//读取加密的握手消息，反序列化成authMsg
 	authPacket, err := h.readMsg(authMsg, prv, conn)
 	if err != nil {
 		return s, err
 	}
+	//验签
 	if err := h.handleAuthMsg(authMsg, prv); err != nil {
 		return s, err
 	}
-
+	//构建认证响应
 	authRespMsg, err := h.makeAuthResp()
 	if err != nil {
 		return s, err
 	}
+	//加密
 	authRespPacket, err := h.sealEIP8(authRespMsg)
 	if err != nil {
 		return s, err
 	}
+	//回写
 	if _, err = conn.Write(authRespPacket); err != nil {
 		return s, err
 	}
-
+	//握手结束，获取秘钥
 	return h.secrets(authPacket, authRespPacket)
 }
 
+/*
+*
+处理认证消息逻辑：
+
+	获取发起者的公钥
+	验证消息签名
+	将处理结果赋值给 handshakeState
+*/
 func (h *handshakeState) handleAuthMsg(msg *authMsgV4, prv *ecdsa.PrivateKey) error {
 	// Import the remote identity.
+	//发起者的公钥
 	rpub, err := importPublicKey(msg.InitiatorPubkey[:])
 	if err != nil {
 		return err
@@ -617,6 +641,7 @@ func (h *handshakeState) readMsg(msg interface{}, prv *ecdsa.PrivateKey, r io.Re
 	// Can't use rlp.DecodeBytes here because it rejects
 	// trailing data (forward-compatibility).
 	s := rlp.NewStream(bytes.NewReader(dec), 0)
+	//反序列化到msg
 	err = s.Decode(msg)
 	return h.rbuf.data[:len(prefix)+len(packet)], err
 }

@@ -189,14 +189,16 @@ type Server struct {
 	dialsched *dialScheduler
 
 	// Channels into the run loop.
-	quit                    chan struct{}
-	addtrusted              chan *enode.Node
-	removetrusted           chan *enode.Node
-	peerOp                  chan peerOpFunc
-	peerOpDone              chan struct{}
-	delpeer                 chan peerDrop
+	quit          chan struct{}
+	addtrusted    chan *enode.Node
+	removetrusted chan *enode.Node
+	peerOp        chan peerOpFunc
+	peerOpDone    chan struct{}
+	delpeer       chan peerDrop
+	//rplx 握手完成
 	checkpointPostHandshake chan *conn
-	checkpointAddPeer       chan *conn
+	//协议握手完成
+	checkpointAddPeer chan *conn
 
 	// State of run loop and listenLoop.
 	inboundHistory expHeap
@@ -222,13 +224,13 @@ const (
 // conn wraps a network connection with information gathered
 // during the two handshakes.
 type conn struct {
-	fd net.Conn
-	transport
-	node  *enode.Node
-	flags connFlag
-	cont  chan error // The run loop uses cont to signal errors to SetupConn.
-	caps  []Cap      // valid after the protocol handshake
-	name  string     // valid after the protocol handshake
+	fd        net.Conn
+	transport             //两次握手
+	node      *enode.Node //对端节点
+	flags     connFlag
+	cont      chan error // The run loop uses cont to signal errors to SetupConn.
+	caps      []Cap      // valid after the protocol handshake
+	name      string     // valid after the protocol handshake
 }
 
 type transport interface {
@@ -458,9 +460,11 @@ func (srv *Server) Start() (err error) {
 	if srv.PrivateKey == nil {
 		return errors.New("Server.PrivateKey must be set to a non-nil key")
 	}
+	//绑定协议握手函数
 	if srv.newTransport == nil {
 		srv.newTransport = newRLPX
 	}
+	//绑定系统监听函数
 	if srv.listenFunc == nil {
 		srv.listenFunc = net.Listen
 	}
@@ -473,26 +477,42 @@ func (srv *Server) Start() (err error) {
 	srv.peerOp = make(chan peerOpFunc)
 	srv.peerOpDone = make(chan struct{})
 
+	/**
+	设置本地节点setupLocalNode
+	srv.ourHandshake
+	srv.nodedb
+	srv.localnode
+	srv.localnode.SetStaticIP
+	*/
 	if err := srv.setupLocalNode(); err != nil {
 		return err
 	}
+
+	//监听TCP连接请求，并执行两次握手
 	if srv.ListenAddr != "" {
 		if err := srv.setupListening(); err != nil {
 			return err
 		}
 	}
+
+	//启动节点发现
 	if err := srv.setupDiscovery(); err != nil {
 		return err
 	}
+
+	//启动连接定时器
 	srv.setupDialScheduler()
 
 	srv.loopWG.Add(1)
+
+	//启动本地连接主逻辑，连接管理、节点管理等都是异步处理，在这里同步
 	go srv.run()
 	return nil
 }
 
 func (srv *Server) setupLocalNode() error {
 	// Create the devp2p handshake.
+	//构造协议握手数据结构 protoHandshake
 	pubkey := crypto.FromECDSAPub(&srv.PrivateKey.PublicKey)
 	srv.ourHandshake = &protoHandshake{Version: baseProtocolVersion, Name: srv.Name, ID: pubkey[1:]}
 	for _, p := range srv.Protocols {
@@ -501,12 +521,15 @@ func (srv *Server) setupLocalNode() error {
 	sort.Sort(capsByNameAndVersion(srv.ourHandshake.Caps))
 
 	// Create the local node.
+	//打开leveldb或者内存数据库
 	db, err := enode.OpenDB(srv.NodeDatabase)
 	if err != nil {
 		return err
 	}
 	srv.nodedb = db
+	//构建本地节点
 	srv.localnode = enode.NewLocalNode(db, srv.PrivateKey)
+	//回环地址
 	srv.localnode.SetFallbackIP(net.IP{127, 0, 0, 1})
 	// TODO: check conflicts
 	for _, p := range srv.Protocols {
@@ -514,6 +537,8 @@ func (srv *Server) setupLocalNode() error {
 			srv.localnode.Set(e)
 		}
 	}
+
+	//静态ip
 	switch srv.NAT.(type) {
 	case nil:
 		// No NAT interface, do nothing.
@@ -535,6 +560,7 @@ func (srv *Server) setupLocalNode() error {
 	return nil
 }
 
+//启动节点发现
 func (srv *Server) setupDiscovery() error {
 	srv.discmix = enode.NewFairMix(discmixTimeout)
 
@@ -625,7 +651,9 @@ func (srv *Server) setupDiscovery() error {
 	return nil
 }
 
+//启动连接定时器
 func (srv *Server) setupDialScheduler() {
+	//定时器配置
 	config := dialConfig{
 		self:           srv.localnode.ID(),
 		maxDialPeers:   srv.maxDialedConns(),
@@ -641,7 +669,9 @@ func (srv *Server) setupDialScheduler() {
 	if config.dialer == nil {
 		config.dialer = tcpDialer{&net.Dialer{Timeout: defaultDialTimeout}}
 	}
+	//构建拨号定时器
 	srv.dialsched = newDialScheduler(config, srv.discmix, srv.SetupConn)
+	//添加静态节点
 	for _, n := range srv.StaticNodes {
 		srv.dialsched.addStatic(n)
 	}
@@ -666,8 +696,14 @@ func (srv *Server) maxDialedConns() (limit int) {
 	return limit
 }
 
+/*
+*
+srv.listener
+srv.localnode.Set(enr.TCP(tcp.Port))  optional NAT
+*/
 func (srv *Server) setupListening() error {
 	// Launch the listener.
+	// 调用系统api获得TCP监听器 net.Listen()
 	listener, err := srv.listenFunc("tcp", srv.ListenAddr)
 	if err != nil {
 		return err
@@ -676,11 +712,14 @@ func (srv *Server) setupListening() error {
 	srv.ListenAddr = listener.Addr().String()
 
 	// Update the local node record and map the TCP listening port if NAT is configured.
+	//判断属于TCP地址类型，解决NAT tcp端口映射
 	if tcp, ok := listener.Addr().(*net.TCPAddr); ok {
 		srv.localnode.Set(enr.TCP(tcp.Port))
 		if !tcp.IP.IsLoopback() && srv.NAT != nil {
+			//启动协程处理nat.Map，主线程同步等待
 			srv.loopWG.Add(1)
 			go func() {
+				//同名端口NAT映射
 				nat.Map(srv.NAT, srv.quit, "tcp", tcp.Port, tcp.Port, "ethereum p2p")
 				srv.loopWG.Done()
 			}()
@@ -688,6 +727,7 @@ func (srv *Server) setupListening() error {
 	}
 
 	srv.loopWG.Add(1)
+	//启动协程处理请求 defer loopWG.Done()
 	go srv.listenLoop()
 	return nil
 }
@@ -695,24 +735,29 @@ func (srv *Server) setupListening() error {
 // doPeerOp runs fn on the main loop.
 func (srv *Server) doPeerOp(fn peerOpFunc) {
 	select {
-	case srv.peerOp <- fn:
-		<-srv.peerOpDone
+	case srv.peerOp <- fn: //peerOp管道可写
+		<-srv.peerOpDone //?
 	case <-srv.quit:
 	}
 }
 
 // run is the main loop of the server.
+// P2P 网络主循环
 func (srv *Server) run() {
 	srv.log.Info("Started P2P networking", "self", srv.localnode.Node().URLv4())
+
+	//释放资源
 	defer srv.loopWG.Done()
 	defer srv.nodedb.Close()
 	defer srv.discmix.Close()
 	defer srv.dialsched.stop()
 
 	var (
+		//当前节点id -> 已连接的节点
 		peers        = make(map[enode.ID]*Peer)
 		inboundCount = 0
-		trusted      = make(map[enode.ID]bool, len(srv.TrustedNodes))
+		//节点id -> 当前是否信任
+		trusted = make(map[enode.ID]bool, len(srv.TrustedNodes))
 	)
 	// Put trusted nodes into a map to speed up checks.
 	// Trusted peers are loaded on startup or added via AddTrustedPeer RPC.
@@ -723,11 +768,11 @@ func (srv *Server) run() {
 running:
 	for {
 		select {
-		case <-srv.quit:
+		case <-srv.quit: //退出管道可读
 			// The server was stopped. Run the cleanup logic.
 			break running
 
-		case n := <-srv.addtrusted:
+		case n := <-srv.addtrusted: //加入信任端点管道可读
 			// This channel is used by AddTrustedPeer to add a node
 			// to the trusted node set.
 			srv.log.Trace("Adding trusted node", "node", n)
@@ -736,7 +781,7 @@ running:
 				p.rw.set(trustedConn, true)
 			}
 
-		case n := <-srv.removetrusted:
+		case n := <-srv.removetrusted: //移除信任端点管道可读
 			// This channel is used by RemoveTrustedPeer to remove a node
 			// from the trusted node set.
 			srv.log.Trace("Removing trusted node", "node", n)
@@ -750,37 +795,42 @@ running:
 			op(peers)
 			srv.peerOpDone <- struct{}{}
 
-		case c := <-srv.checkpointPostHandshake:
+		case c := <-srv.checkpointPostHandshake: //rlpx握手完毕
 			// A connection has passed the encryption handshake so
 			// the remote identity is known (but hasn't been verified yet).
 			if trusted[c.node.ID()] {
 				// Ensure that the trusted flag is set before checking against MaxPeers.
-				c.flags |= trustedConn
+				c.flags |= trustedConn //修改连接状态为可信连接
 			}
 			// TODO: track in-progress inbound node IDs (pre-Peer) to avoid dialing them.
 			c.cont <- srv.postHandshakeChecks(peers, inboundCount, c)
 
-		case c := <-srv.checkpointAddPeer:
+		case c := <-srv.checkpointAddPeer: //协议握手完毕
 			// At this point the connection is past the protocol handshake.
 			// Its capabilities are known and the remote identity is verified.
 			err := srv.addPeerChecks(peers, inboundCount, c)
 			if err == nil {
 				// The handshakes are done and it passed all checks.
+				//根据conn构建对端节点
 				p := srv.launchPeer(c)
+				//加入已连接节点
 				peers[c.node.ID()] = p
 				srv.log.Debug("Adding p2p peer", "peercount", len(peers), "id", p.ID(), "conn", c.flags, "addr", p.RemoteAddr(), "name", p.Name())
+				//发布新连接节点通知
 				srv.dialsched.peerAdded(c)
+				//递增计数器
 				if p.Inbound() {
 					inboundCount++
 				}
 			}
 			c.cont <- err
 
-		case pd := <-srv.delpeer:
+		case pd := <-srv.delpeer: //节点断连
 			// A peer disconnected.
 			d := common.PrettyDuration(mclock.Now() - pd.created)
-			delete(peers, pd.ID())
+			delete(peers, pd.ID()) //从已连接节点移除
 			srv.log.Debug("Removing p2p peer", "peercount", len(peers), "id", pd.ID(), "duration", d, "req", pd.requested, "err", pd.err)
+			//发布断连节点通知
 			srv.dialsched.peerRemoved(pd.rw)
 			if pd.Inbound() {
 				inboundCount--
@@ -789,6 +839,7 @@ running:
 	}
 
 	srv.log.Trace("P2P networking is spinning down")
+	//退出主循环，回收资源
 
 	// Terminate discovery. If there is a running lookup it will terminate soon.
 	if srv.ntab != nil {
@@ -842,18 +893,22 @@ func (srv *Server) listenLoop() {
 	srv.log.Debug("TCP listener up", "addr", srv.listener.Addr())
 
 	// The slots channel limits accepts of new connections.
+	//默认50个连接
 	tokens := defaultMaxPendingPeers
 	if srv.MaxPendingPeers > 0 {
 		tokens = srv.MaxPendingPeers
 	}
+	//创建管道，根据最大连接数
 	slots := make(chan struct{}, tokens)
 	for i := 0; i < tokens; i++ {
+		//初始化空结构体，类型struct{}
 		slots <- struct{}{}
 	}
 
 	// Wait for slots to be returned on exit. This ensures all connection goroutines
 	// are down before listenLoop returns.
 	defer srv.loopWG.Done()
+	//清理管道
 	defer func() {
 		for i := 0; i < cap(slots); i++ {
 			<-slots
@@ -862,6 +917,7 @@ func (srv *Server) listenLoop() {
 
 	for {
 		// Wait for a free slot before accepting.
+		//可用连接数--，如果无可用则阻塞
 		<-slots
 
 		var (
@@ -870,6 +926,7 @@ func (srv *Server) listenLoop() {
 			lastLog time.Time
 		)
 		for {
+			//等待网络连接
 			fd, err = srv.listener.Accept()
 			if netutil.IsTemporaryError(err) {
 				if time.Since(lastLog) > 1*time.Second {
@@ -880,28 +937,34 @@ func (srv *Server) listenLoop() {
 				continue
 			} else if err != nil {
 				srv.log.Debug("Read error", "err", err)
+				//网络发生错误，退出监听，归还可用连接是为了执行874行
 				slots <- struct{}{}
 				return
 			}
+			//成功得到连接
 			break
 		}
 
 		remoteIP := netutil.AddrIP(fd.RemoteAddr())
+		//如果在IP黑名单，丢弃连接，归还可用连接数
 		if err := srv.checkInboundConn(remoteIP); err != nil {
 			srv.log.Debug("Rejected inbound connection", "addr", fd.RemoteAddr(), "err", err)
 			fd.Close()
 			slots <- struct{}{}
 			continue
 		}
+		//更新监控数据
 		if remoteIP != nil {
 			var addr *net.TCPAddr
 			if tcp, ok := fd.RemoteAddr().(*net.TCPAddr); ok {
 				addr = tcp
 			}
+			//递增连接计数器
 			fd = newMeteredConn(fd, true, addr)
 			srv.log.Trace("Accepted connection", "addr", fd.RemoteAddr())
 		}
 		go func() {
+			//执行两次握手，网络连接 -> conn
 			srv.SetupConn(fd, inboundConn, nil)
 			slots <- struct{}{}
 		}()
@@ -913,6 +976,7 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 		return nil
 	}
 	// Reject connections that do not match NetRestrict.
+	//是否是限制IP
 	if srv.NetRestrict != nil && !srv.NetRestrict.Contains(remoteIP) {
 		return fmt.Errorf("not in netrestrict list")
 	}
@@ -922,6 +986,7 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 	if !netutil.IsLAN(remoteIP) && srv.inboundHistory.contains(remoteIP.String()) {
 		return fmt.Errorf("too many attempts")
 	}
+	//记录客户端访问历史 ip =》 时间戳
 	srv.inboundHistory.add(remoteIP.String(), now.Add(inboundThrottleTime))
 	return nil
 }
@@ -930,13 +995,15 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 // as a peer. It returns when the connection has been added as a peer
 // or the handshakes have failed.
 func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) error {
+	//构造conn对象
 	c := &conn{fd: fd, flags: flags, cont: make(chan error)}
+	//实现协议握手接口 Transport.go 54行
 	if dialDest == nil {
 		c.transport = srv.newTransport(fd, nil)
 	} else {
 		c.transport = srv.newTransport(fd, dialDest.Pubkey())
 	}
-
+	//基于net.conn开启握手协商，并给run方法发送对应管道
 	err := srv.setupConn(c, flags, dialDest)
 	if err != nil {
 		c.close(err)
@@ -944,8 +1011,12 @@ func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) 
 	return err
 }
 
+/*
+开启连接核心逻辑：两次握手：RLPx handshake、p2p handshake
+*/
 func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) error {
 	// Prevent leftover pending conns from entering the handshake.
+	//状态检查
 	srv.lock.Lock()
 	running := srv.running
 	srv.lock.Unlock()
@@ -954,6 +1025,7 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 	}
 
 	// If dialing, figure out the remote public key.
+	//对端公钥
 	if dialDest != nil {
 		dialPubkey := new(ecdsa.PublicKey)
 		if err := dialDest.Load((*enode.Secp256k1)(dialPubkey)); err != nil {
@@ -964,17 +1036,20 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 	}
 
 	// Run the RLPx handshake.
+	//握手返回对端公钥
 	remotePubkey, err := c.doEncHandshake(srv.PrivateKey)
 	if err != nil {
 		srv.log.Trace("Failed RLPx handshake", "addr", c.fd.RemoteAddr(), "conn", c.flags, "err", err)
 		return err
 	}
+	//对端节点，指定或者从连接信息中取
 	if dialDest != nil {
 		c.node = dialDest
 	} else {
 		c.node = nodeFromConn(remotePubkey, c.fd)
 	}
 	clog := srv.log.New("id", c.node.ID(), "addr", c.fd.RemoteAddr(), "conn", c.flags)
+	//阻塞直到checkpointPostHandshake 管道可写
 	err = srv.checkpoint(c, srv.checkpointPostHandshake)
 	if err != nil {
 		clog.Trace("Rejected peer", "err", err)
@@ -982,16 +1057,20 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 	}
 
 	// Run the capability negotiation handshake.
+	//协议握手？
 	phs, err := c.doProtoHandshake(srv.ourHandshake)
 	if err != nil {
 		clog.Trace("Failed p2p handshake", "err", err)
 		return err
 	}
+	//对比连接c的对端id，握手结果phs的id
 	if id := c.node.ID(); !bytes.Equal(crypto.Keccak256(phs.ID), id[:]) {
 		clog.Trace("Wrong devp2p handshake identity", "phsid", hex.EncodeToString(phs.ID))
 		return DiscUnexpectedIdentity
 	}
+	//握手结果
 	c.caps, c.name = phs.Caps, phs.Name
+	//阻塞直到 checkpointAddPeer 管道可写
 	err = srv.checkpoint(c, srv.checkpointAddPeer)
 	if err != nil {
 		clog.Trace("Rejected peer", "err", err)
@@ -1001,6 +1080,7 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 	return nil
 }
 
+// 获取连接对端套接字
 func nodeFromConn(pubkey *ecdsa.PublicKey, conn net.Conn) *enode.Node {
 	var ip net.IP
 	var port int
@@ -1013,22 +1093,26 @@ func nodeFromConn(pubkey *ecdsa.PublicKey, conn net.Conn) *enode.Node {
 
 // checkpoint sends the conn to run, which performs the
 // post-handshake checks for the stage (posthandshake, addpeer).
+// 在两次握手完成后，将conn交给run方法处理
 func (srv *Server) checkpoint(c *conn, stage chan<- *conn) error {
 	select {
-	case stage <- c:
-	case <-srv.quit:
+	case stage <- c: //stage管道可写
+	case <-srv.quit: //退出管道可读
 		return errServerStopped
 	}
+	//stage管道可写，这是什么错误
 	return <-c.cont
 }
 
 func (srv *Server) launchPeer(c *conn) *Peer {
+	//构建节点
 	p := newPeer(srv.log, c, srv.Protocols)
 	if srv.EnableMsgEvents {
 		// If message events are enabled, pass the peerFeed
 		// to the peer.
 		p.events = &srv.peerFeed
 	}
+	//异步启动
 	go srv.runPeer(p)
 	return p
 }
@@ -1038,6 +1122,7 @@ func (srv *Server) runPeer(p *Peer) {
 	if srv.newPeerHook != nil {
 		srv.newPeerHook(p)
 	}
+	//广播上线信号
 	srv.peerFeed.Send(&PeerEvent{
 		Type:          PeerEventTypeAdd,
 		Peer:          p.ID(),
@@ -1046,17 +1131,20 @@ func (srv *Server) runPeer(p *Peer) {
 	})
 
 	// Run the per-peer main loop.
+	//两个循环：心跳、处理消息
 	remoteRequested, err := p.run()
 
 	// Announce disconnect on the main loop to update the peer set.
 	// The main loop waits for existing peers to be sent on srv.delpeer
 	// before returning, so this send should not select on srv.quit.
+	//下线管道写入信号
 	srv.delpeer <- peerDrop{p, err, remoteRequested}
 
 	// Broadcast peer drop to external subscribers. This needs to be
 	// after the send to delpeer so subscribers have a consistent view of
 	// the peer set (i.e. Server.Peers() doesn't include the peer when the
 	// event is received).
+	//广播下线事件
 	srv.peerFeed.Send(&PeerEvent{
 		Type:          PeerEventTypeDrop,
 		Peer:          p.ID(),

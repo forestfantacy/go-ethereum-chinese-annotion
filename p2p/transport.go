@@ -45,22 +45,30 @@ const (
 
 // rlpxTransport is the transport used by actual (non-test) connections.
 // It wraps an RLPx connection with locks and read/write deadlines.
+// 使用实际连接的传输层，封装了带有锁和读写管道的RLPx连接
 type rlpxTransport struct {
+	//读写锁
 	rmu, wmu sync.Mutex
-	wbuf     bytes.Buffer
-	conn     *rlpx.Conn
+	//写缓冲区
+	wbuf bytes.Buffer
+	//rlpx协议连接
+	conn *rlpx.Conn
 }
 
+// 工厂方法：创建RLPx传输层
 func newRLPX(conn net.Conn, dialDest *ecdsa.PublicKey) transport {
 	return &rlpxTransport{conn: rlpx.NewConn(conn, dialDest)}
 }
 
+// ReadMsg 读取网络数据，并封装成Msg
 func (t *rlpxTransport) ReadMsg() (Msg, error) {
+	//读锁
 	t.rmu.Lock()
 	defer t.rmu.Unlock()
 
 	var msg Msg
 	t.conn.SetReadDeadline(time.Now().Add(frameReadTimeout))
+	//从网络连接读到原始数据流，解析成协议数据结构
 	code, data, wireSize, err := t.conn.Read()
 	if err == nil {
 		// Protocol messages are dispatched to subprotocol handlers asynchronously,
@@ -78,7 +86,9 @@ func (t *rlpxTransport) ReadMsg() (Msg, error) {
 	return msg, err
 }
 
+// WriteMsg 发送msg
 func (t *rlpxTransport) WriteMsg(msg Msg) error {
+	//写锁
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
 
@@ -90,6 +100,7 @@ func (t *rlpxTransport) WriteMsg(msg Msg) error {
 
 	// Write the message.
 	t.conn.SetWriteDeadline(time.Now().Add(frameWriteTimeout))
+	//往连接中写code和data
 	size, err := t.conn.Write(msg.Code, t.wbuf.Bytes())
 	if err != nil {
 		return err
@@ -105,7 +116,9 @@ func (t *rlpxTransport) WriteMsg(msg Msg) error {
 	return nil
 }
 
+// 关闭传输层
 func (t *rlpxTransport) close(err error) {
+	//写锁
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
 
@@ -115,6 +128,7 @@ func (t *rlpxTransport) close(err error) {
 	if t.conn != nil {
 		if r, ok := err.(DiscReason); ok && r != DiscNetworkError {
 			deadline := time.Now().Add(discWriteTimeout)
+			//发送关闭信号，1秒后conn
 			if err := t.conn.SetWriteDeadline(deadline); err == nil {
 				// Connection supports write deadline.
 				t.wbuf.Reset()
@@ -127,6 +141,7 @@ func (t *rlpxTransport) close(err error) {
 }
 
 func (t *rlpxTransport) doEncHandshake(prv *ecdsa.PrivateKey) (*ecdsa.PublicKey, error) {
+	//5秒内完成握手
 	t.conn.SetDeadline(time.Now().Add(handshakeTimeout))
 	return t.conn.Handshake(prv)
 }
@@ -151,6 +166,7 @@ func (t *rlpxTransport) doProtoHandshake(our *protoHandshake) (their *protoHands
 	return their, nil
 }
 
+// 从网络读取消息，验证，反序列化成 protoHandshake
 func readProtocolHandshake(rw MsgReader) (*protoHandshake, error) {
 	msg, err := rw.ReadMsg()
 	if err != nil {

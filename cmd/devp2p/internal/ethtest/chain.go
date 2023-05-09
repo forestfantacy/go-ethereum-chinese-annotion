@@ -164,6 +164,8 @@ func loadGenesis(genesisFile string) (core.Genesis, error) {
 
 func blocksFromFile(chainfile string, gblock *types.Block) ([]*types.Block, error) {
 	// Load chain.rlp.
+	//读文件、解压缩得到输入流
+	//拿到输入流、指定Block结构体，即可反序列化得到block实例
 	fh, err := os.Open(chainfile)
 	if err != nil {
 		return nil, err
@@ -180,6 +182,7 @@ func blocksFromFile(chainfile string, gblock *types.Block) ([]*types.Block, erro
 	blocks[0] = gblock
 	for i := 0; ; i++ {
 		var b types.Block
+		//io.EOF文件结束
 		if err := stream.Decode(&b); err == io.EOF {
 			break
 		} else if err != nil {

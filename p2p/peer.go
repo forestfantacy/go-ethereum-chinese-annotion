@@ -250,7 +250,9 @@ func (p *Peer) run() (remoteRequested bool, err error) {
 		reason     DiscReason // sent to the peer
 	)
 	p.wg.Add(2)
+	//接收并处理消息
 	go p.readLoop(readErr)
+	//心跳轮训
 	go p.pingLoop()
 
 	// Start all protocol handlers.
