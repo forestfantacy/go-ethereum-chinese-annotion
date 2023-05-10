@@ -57,6 +57,7 @@ const (
 )
 
 // protoHandshake is the RLP structure of the protocol handshake.
+// 协议握手的数据结构
 type protoHandshake struct {
 	Version    uint64
 	Name       string

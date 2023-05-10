@@ -45,13 +45,13 @@ const (
 
 // rlpxTransport is the transport used by actual (non-test) connections.
 // It wraps an RLPx connection with locks and read/write deadlines.
-// 使用实际连接的传输层，封装了带有锁和读写管道的RLPx连接
+// 使用RLPx网络连接的传输层，封装了锁和读写管道
 type rlpxTransport struct {
 	//读写锁
 	rmu, wmu sync.Mutex
 	//写缓冲区
 	wbuf bytes.Buffer
-	//rlpx协议连接
+	//RLPx网络连接
 	conn *rlpx.Conn
 }
 
@@ -140,19 +140,24 @@ func (t *rlpxTransport) close(err error) {
 	t.conn.Close()
 }
 
+// 一次握手：身份认证
 func (t *rlpxTransport) doEncHandshake(prv *ecdsa.PrivateKey) (*ecdsa.PublicKey, error) {
 	//5秒内完成握手
 	t.conn.SetDeadline(time.Now().Add(handshakeTimeout))
+	//通讯双方基于签名验签的身份认证
 	return t.conn.Handshake(prv)
 }
 
+// 二次握手：发送 our handshakeMsg，收到响应返回 their protoHandshake
 func (t *rlpxTransport) doProtoHandshake(our *protoHandshake) (their *protoHandshake, err error) {
 	// Writing our handshake happens concurrently, we prefer
 	// returning the handshake read error. If the remote side
 	// disconnects us early with a valid reason, we should return it
 	// as the error so it can be tracked elsewhere.
 	werr := make(chan error, 1)
+	//异步发送handshakeMsg
 	go func() { werr <- Send(t, handshakeMsg, our) }()
+	//读取handshakeMsg，并反序列化成 protoHandshake
 	if their, err = readProtocolHandshake(t); err != nil {
 		<-werr // make sure the write terminates too
 		return nil, err

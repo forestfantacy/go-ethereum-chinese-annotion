@@ -44,7 +44,7 @@ type Protocol struct {
 	// The peer connection is closed when Start returns. It should return
 	// any protocol-level error (such as an I/O error) that is
 	// encountered.
-	//与已连接的peer之间读写消息
+	//定义协议具体业务：与已连接的peer之间读写消息
 	Run func(peer *Peer, rw MsgReadWriter) error
 
 	// NodeInfo is an optional helper method to retrieve protocol specific metadata
@@ -62,9 +62,11 @@ type Protocol struct {
 	DialCandidates enode.Iterator
 
 	// Attributes contains protocol specific information for the node record.
+	//附加消息字段列表
 	Attributes []enr.Entry
 }
 
+// 子协议名称和版本
 func (p Protocol) cap() Cap {
 	return Cap{p.Name, p.Version}
 }
@@ -79,6 +81,7 @@ func (cap Cap) String() string {
 	return fmt.Sprintf("%s/%d", cap.Name, cap.Version)
 }
 
+// 一组协议
 type capsByNameAndVersion []Cap
 
 func (cs capsByNameAndVersion) Len() int      { return len(cs) }
