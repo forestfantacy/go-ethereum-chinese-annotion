@@ -90,6 +90,8 @@ var (
 //   - dynamic dials are created from node discovery results. The dialer
 //     continuously reads candidate nodes from its input iterator and attempts
 //     to create peer connections to nodes arriving through the iterator.
+//
+// 拨号器创建并保持出口连接并提交给服务器
 type dialScheduler struct {
 	dialConfig
 	setupFunc   dialSetupFunc
@@ -105,6 +107,7 @@ type dialScheduler struct {
 
 	// Everything below here belongs to loop and
 	// should only be accessed by code on the loop goroutine.
+	//根据节点发现保持的节点连接
 	dialing   map[enode.ID]*dialTask // active tasks
 	peers     map[enode.ID]struct{}  // all connected peers
 	dialPeers int                    // current number of dialed peers
@@ -113,6 +116,7 @@ type dialScheduler struct {
 	// (i.e. those passing checkDial) is kept in staticPool. The scheduler prefers
 	// launching random static tasks from the pool over launching dynamic dials from the
 	// iterator.
+	//根据静态配置保持的节点连接
 	static     map[enode.ID]*dialTask
 	staticPool []*dialTask
 
@@ -240,10 +244,11 @@ loop:
 		d.logStats()
 
 		select {
-		case node := <-nodesCh:
+		case node := <-nodesCh: //dial candidate
 			if err := d.checkDial(node); err != nil {
 				d.log.Trace("Discarding dial candidate", "id", node.ID(), "ip", node.IP(), "reason", err)
 			} else {
+				//拨号
 				d.startDial(newDialTask(node, dynDialedConn))
 			}
 
@@ -307,6 +312,7 @@ loop:
 	}
 
 	d.historyTimer.Stop()
+	//节点发现
 	for range d.dialing {
 		<-d.doneCh
 	}

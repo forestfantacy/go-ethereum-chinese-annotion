@@ -103,6 +103,7 @@ type PeerEvent struct {
 }
 
 // Peer represents a connected remote node.
+// 已连接的远程节点
 type Peer struct {
 	//本机对远程节点读写消息的能力
 	rw *conn
@@ -173,6 +174,7 @@ func (p *Peer) Fullname() string {
 }
 
 // Caps returns the capabilities (supported subprotocols) of the remote peer.
+// 远端节点支持的子协议
 func (p *Peer) Caps() []Cap {
 	// TODO: maybe return copy
 	return p.rw.caps
@@ -181,6 +183,7 @@ func (p *Peer) Caps() []Cap {
 // RunningCap returns true if the peer is actively connected using any of the
 // enumerated versions of a specific protocol, meaning that at least one of the
 // versions is supported by both this node and the peer p.
+// 使用至少有一种子协议可以连接到远程节点
 func (p *Peer) RunningCap(protocol string, versions []uint) bool {
 	if proto, ok := p.running[protocol]; ok {
 		for _, ver := range versions {
@@ -227,10 +230,11 @@ func (p *Peer) Inbound() bool {
 }
 
 func newPeer(log log.Logger, conn *conn, protocols []Protocol) *Peer {
+	//连接匹配的子协议列表  make(map[string]*protoRW)
 	protomap := matchProtocols(protocols, conn.caps, conn)
 	p := &Peer{
 		rw:       conn,
-		running:  protomap,
+		running:  protomap, //子协议列表
 		created:  mclock.Now(),
 		disc:     make(chan DiscReason),
 		protoErr: make(chan error, len(protomap)+1), // protocols + pingLoop
@@ -252,9 +256,9 @@ func (p *Peer) run() (remoteRequested bool, err error) {
 		reason     DiscReason // sent to the peer
 	)
 	p.wg.Add(2)
-	//接收并处理消息
+	//接收消息，交给管道
 	go p.readLoop(readErr)
-	//心跳轮训
+	//定时发送心跳
 	go p.pingLoop()
 
 	// Start all protocol handlers.
@@ -263,6 +267,7 @@ func (p *Peer) run() (remoteRequested bool, err error) {
 	p.startProtocols(writeStart, writeErr)
 
 	// Wait for an error or disconnect.
+	//发生错误或者断连退出，回收资源
 loop:
 	for {
 		select {
@@ -297,6 +302,7 @@ loop:
 	return remoteRequested, err
 }
 
+// 持续对外发送 pingMsg
 func (p *Peer) pingLoop() {
 	ping := time.NewTimer(pingInterval)
 	defer p.wg.Done()
@@ -315,6 +321,7 @@ func (p *Peer) pingLoop() {
 	}
 }
 
+// 持续读取并处理msg
 func (p *Peer) readLoop(errc chan<- error) {
 	defer p.wg.Done()
 	for {
@@ -324,6 +331,7 @@ func (p *Peer) readLoop(errc chan<- error) {
 			return
 		}
 		msg.ReceivedAt = time.Now()
+		//pingMsg || discMsg || subprotocol message
 		if err = p.handle(msg); err != nil {
 			errc <- err
 			return
@@ -358,7 +366,7 @@ func (p *Peer) handle(msg Msg) error {
 			metrics.GetOrRegisterMeter(m+"/packets", nil).Mark(1)
 		}
 		select {
-		case proto.in <- msg:
+		case proto.in <- msg: //交给协议读写管道，然后 489行 ReadMsg 管道可读
 			return nil
 		case <-p.closed:
 			return io.EOF
@@ -367,6 +375,7 @@ func (p *Peer) handle(msg Msg) error {
 	return nil
 }
 
+// 匹配的子协议数量
 func countMatchingProtocols(protocols []Protocol, caps []Cap) int {
 	n := 0
 	for _, cap := range caps {
@@ -380,6 +389,7 @@ func countMatchingProtocols(protocols []Protocol, caps []Cap) int {
 }
 
 // matchProtocols creates structures for matching named subprotocols.
+// 匹配的子协议
 func matchProtocols(protocols []Protocol, caps []Cap, rw MsgReadWriter) map[string]*protoRW {
 	sort.Sort(capsByNameAndVersion(caps))
 	offset := baseProtocolLength
@@ -413,13 +423,14 @@ func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error)
 		proto.wstart = writeStart
 		proto.werr = writeErr
 		var rw MsgReadWriter = proto
+
 		if p.events != nil {
 			rw = newMsgEventer(rw, p.events, p.ID(), proto.Name, p.Info().Network.RemoteAddress, p.Info().Network.LocalAddress)
 		}
 		p.log.Trace(fmt.Sprintf("Starting protocol %s/%d", proto.Name, proto.Version))
 		go func() {
 			defer p.wg.Done()
-			//?
+			//使用子协议与p交互，运行什么业务取决于具体子协议
 			err := proto.Run(p, rw)
 			if err == nil {
 				p.log.Trace(fmt.Sprintf("Protocol %s/%d returned", proto.Name, proto.Version))
@@ -427,6 +438,7 @@ func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error)
 			} else if !errors.Is(err, io.EOF) {
 				p.log.Trace(fmt.Sprintf("Protocol %s/%d failed", proto.Name, proto.Version), "err", err)
 			}
+			//执行完毕同步结果
 			p.protoErr <- err
 		}()
 	}
@@ -434,6 +446,7 @@ func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error)
 
 // getProto finds the protocol responsible for handling
 // the given message code.
+// 根据message code查询子协议
 func (p *Peer) getProto(code uint64) (*protoRW, error) {
 	for _, proto := range p.running {
 		if code >= proto.offset && code < proto.offset+proto.Length {
@@ -443,9 +456,10 @@ func (p *Peer) getProto(code uint64) (*protoRW, error) {
 	return nil, newPeerError(errInvalidMsgCode, "%d", code)
 }
 
+// 协议读写管道
 type protoRW struct {
 	Protocol
-	in     chan Msg        // receives read messages
+	in     chan Msg        // receives read messages  收到待处理消息，in <- msg
 	closed <-chan struct{} // receives when peer is shutting down
 	wstart <-chan struct{} // receives when write may start
 	werr   chan<- error    // for write results
@@ -453,6 +467,7 @@ type protoRW struct {
 	w      MsgWriter
 }
 
+// WriteMsg 子协议发送消息
 func (rw *protoRW) WriteMsg(msg Msg) (err error) {
 	if msg.Code >= rw.Length {
 		return newPeerError(errInvalidMsgCode, "not handled")
@@ -476,6 +491,7 @@ func (rw *protoRW) WriteMsg(msg Msg) (err error) {
 	return err
 }
 
+// ReadMsg 子协议读取消息
 func (rw *protoRW) ReadMsg() (Msg, error) {
 	select {
 	case msg := <-rw.in:
@@ -489,6 +505,7 @@ func (rw *protoRW) ReadMsg() (Msg, error) {
 // PeerInfo represents a short summary of the information known about a connected
 // peer. Sub-protocol independent fields are contained and initialized here, with
 // protocol specifics delegated to all connected sub-protocols.
+// 已连接的远端节点的概要信息
 type PeerInfo struct {
 	ENR     string   `json:"enr,omitempty"` // Ethereum Node Record
 	Enode   string   `json:"enode"`         // Node URL

@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enr"
 )
 
+// 定义名为discard的子协议，具体业务：读取消息，打印消息code，然后丢弃消息
 var discard = Protocol{
 	Name:   "discard",
 	Length: 1,

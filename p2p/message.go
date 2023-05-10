@@ -36,12 +36,14 @@ import (
 // send it any number of times. If you want to reuse an encoded
 // structure, encode the payload into a byte array and create a
 // separate Msg with a bytes.Reader as Payload for each send.
+// p2p消息结构
 type Msg struct {
-	Code       uint64
-	Size       uint32 // Size of the raw payload
+	Code uint64
+	Size uint32 // Size of the raw payload
+	//消息数据
 	Payload    io.Reader
 	ReceivedAt time.Time
-
+	//监控数据
 	meterCap  Cap    // Protocol name and version for egress metering
 	meterCode uint64 // Message within protocol for egress metering
 	meterSize uint32 // Compressed message size for ingress metering
@@ -96,6 +98,7 @@ type MsgReadWriter interface {
 
 // Send writes an RLP-encoded message with the given code.
 // data should encode as an RLP list.
+// 发送1条RLP编码的消息，指定消息码
 func Send(w MsgWriter, msgcode uint64, data interface{}) error {
 	size, r, err := rlp.EncodeToReader(data)
 	if err != nil {
@@ -152,6 +155,7 @@ func (r *eofSignal) Read(buf []byte) (int, error) {
 // MsgPipe creates a message pipe. Reads on one end are matched
 // with writes on the other. The pipe is full-duplex, both ends
 // implement MsgReadWriter.
+// 消息管道
 func MsgPipe() (*MsgPipeRW, *MsgPipeRW) {
 	var (
 		c1, c2  = make(chan Msg), make(chan Msg)
@@ -168,6 +172,7 @@ func MsgPipe() (*MsgPipeRW, *MsgPipeRW) {
 var ErrPipeClosed = errors.New("p2p: read or write on closed message pipe")
 
 // MsgPipeRW is an endpoint of a MsgReadWriter pipe.
+// 管道的一端
 type MsgPipeRW struct {
 	w       chan<- Msg
 	r       <-chan Msg
@@ -225,6 +230,7 @@ func (p *MsgPipeRW) Close() error {
 // ExpectMsg reads a message from r and verifies that its
 // code and encoded RLP content match the provided values.
 // If content is nil, the payload is discarded and not verified.
+// 验证消息
 func ExpectMsg(r MsgReader, code uint64, content interface{}) error {
 	msg, err := r.ReadMsg()
 	if err != nil {

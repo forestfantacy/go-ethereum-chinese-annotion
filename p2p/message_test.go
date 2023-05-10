@@ -26,13 +26,15 @@ import (
 )
 
 func ExampleMsgPipe() {
+	//管道两端
 	rw1, rw2 := MsgPipe()
+	//发送端
 	go func() {
 		Send(rw1, 8, [][]byte{{0, 0}})
 		Send(rw1, 5, [][]byte{{1, 1}})
 		rw1.Close()
 	}()
-
+	//接收端
 	for {
 		msg, err := rw2.ReadMsg()
 		if err != nil {
@@ -41,6 +43,7 @@ func ExampleMsgPipe() {
 		var data [][]byte
 		msg.Decode(&data)
 		fmt.Printf("msg: %d, %x\n", msg.Code, data[0])
+		//fmt.Println("123")
 	}
 	// Output:
 	// msg: 8, 0000

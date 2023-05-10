@@ -231,10 +231,10 @@ type conn struct {
 	fd        net.Conn
 	transport             //两次握手
 	node      *enode.Node //对端节点
-	flags     connFlag
-	cont      chan error // The run loop uses cont to signal errors to SetupConn.
-	caps      []Cap      // valid after the protocol handshake
-	name      string     // valid after the protocol handshake
+	flags     connFlag    //连接类型 动态拨号、静态拨号、拨入连接、信任连接
+	cont      chan error  // The run loop uses cont to signal errors to SetupConn.
+	caps      []Cap       // valid after the protocol handshake
+	name      string      // valid after the protocol handshake
 }
 
 type transport interface {

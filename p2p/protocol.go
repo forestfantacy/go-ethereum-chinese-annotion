@@ -24,6 +24,7 @@ import (
 )
 
 // Protocol represents a P2P subprotocol implementation.
+// P2P 子协议
 type Protocol struct {
 	// Name should contain the official protocol name,
 	// often a three-letter word.
