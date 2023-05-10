@@ -104,7 +104,9 @@ type PeerEvent struct {
 
 // Peer represents a connected remote node.
 type Peer struct {
-	rw      *conn
+	//本机对远程节点读写消息的能力
+	rw *conn
+	//子协议
 	running map[string]*protoRW
 	log     log.Logger
 	created mclock.AbsTime
@@ -257,6 +259,7 @@ func (p *Peer) run() (remoteRequested bool, err error) {
 
 	// Start all protocol handlers.
 	writeStart <- struct{}{}
+	//启动p2p子协议
 	p.startProtocols(writeStart, writeErr)
 
 	// Wait for an error or disconnect.
@@ -328,6 +331,7 @@ func (p *Peer) readLoop(errc chan<- error) {
 	}
 }
 
+// 处理协议消息
 func (p *Peer) handle(msg Msg) error {
 	switch {
 	case msg.Code == pingMsg:
@@ -402,6 +406,7 @@ outer:
 
 func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error) {
 	p.wg.Add(len(p.running))
+	//p.running 是与当前peer的所有子协议
 	for _, proto := range p.running {
 		proto := proto
 		proto.closed = p.closed
@@ -414,6 +419,7 @@ func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error)
 		p.log.Trace(fmt.Sprintf("Starting protocol %s/%d", proto.Name, proto.Version))
 		go func() {
 			defer p.wg.Done()
+			//?
 			err := proto.Run(p, rw)
 			if err == nil {
 				p.log.Trace(fmt.Sprintf("Protocol %s/%d returned", proto.Name, proto.Version))

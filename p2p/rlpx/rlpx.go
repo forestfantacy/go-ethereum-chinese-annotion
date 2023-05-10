@@ -321,7 +321,7 @@ func (c *Conn) Handshake(prv *ecdsa.PrivateKey) (*ecdsa.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	//将秘钥封装到session
+	//构建session，并将秘钥进去
 	c.InitWithSecrets(sec)
 	c.session.rbuf = h.rbuf
 	c.session.wbuf = h.wbuf
@@ -538,29 +538,32 @@ func (h *handshakeState) staticSharedSecret(prv *ecdsa.PrivateKey) ([]byte, erro
 func (h *handshakeState) runInitiator(conn io.ReadWriter, prv *ecdsa.PrivateKey, remote *ecdsa.PublicKey) (s Secrets, err error) {
 	h.initiator = true
 	h.remote = ecies.ImportECDSAPublic(remote)
-
+	//构建认证消息
 	authMsg, err := h.makeAuthMsg(prv)
 	if err != nil {
 		return s, err
 	}
+	//加密
 	authPacket, err := h.sealEIP8(authMsg)
 	if err != nil {
 		return s, err
 	}
-
+	//发送
 	if _, err = conn.Write(authPacket); err != nil {
 		return s, err
 	}
 
 	authRespMsg := new(authRespV4)
+	//接收
 	authRespPacket, err := h.readMsg(authRespMsg, prv, conn)
 	if err != nil {
 		return s, err
 	}
+	//把数据记录到 handshakeState
 	if err := h.handleAuthResp(authRespMsg); err != nil {
 		return s, err
 	}
-
+	//提取秘钥信息
 	return h.secrets(authPacket, authRespPacket)
 }
 

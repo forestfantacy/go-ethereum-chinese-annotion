@@ -44,6 +44,7 @@ func main() {
 	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(false))))
 
 	// register a single ping-pong service
+	//协议集合，这里只有ping-pong一种协议
 	services := map[string]adapters.LifecycleConstructor{
 		"ping-pong": func(ctx *adapters.ServiceContext, stack *node.Node) (node.Lifecycle, error) {
 			pps := newPingPongService(ctx.Config.ID)
@@ -89,9 +90,9 @@ func main() {
 // sends a ping to all its connected peers every 10s and receives a pong in
 // return
 type pingPongService struct {
-	id       enode.ID
+	id       enode.ID //对端节点id
 	log      log.Logger
-	received int64
+	received int64 //接收对端的消息数
 }
 
 func newPingPongService(id enode.ID) *pingPongService {
@@ -140,9 +141,11 @@ func (p *pingPongService) Run(peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 	log := p.log.New("peer.id", peer.ID())
 
 	errC := make(chan error, 1)
+	//每隔10s发送PING
 	go func() {
 		for range time.Tick(10 * time.Second) {
 			log.Info("sending ping")
+			//测试message 发送接口
 			if err := p2p.Send(rw, pingMsgCode, "PING"); err != nil {
 				errC <- err
 				return
@@ -151,6 +154,7 @@ func (p *pingPongService) Run(peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 	}()
 	go func() {
 		for {
+			//读取并序列化成msg对象
 			msg, err := rw.ReadMsg()
 			if err != nil {
 				errC <- err
@@ -162,12 +166,15 @@ func (p *pingPongService) Run(peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 				return
 			}
 			log.Info("received message", "msg.code", msg.Code, "msg.payload", string(payload))
+			//接收消息计数
 			atomic.AddInt64(&p.received, 1)
+			//回写
 			if msg.Code == pingMsgCode {
 				log.Info("sending pong")
 				go p2p.Send(rw, pongMsgCode, "PONG")
 			}
 		}
 	}()
+	//没有错误阻塞，发生错误退出
 	return <-errC
 }

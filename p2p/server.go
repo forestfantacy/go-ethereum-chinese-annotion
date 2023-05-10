@@ -168,9 +168,12 @@ type Server struct {
 
 	// Hooks for testing. These are useful because we can inhibit
 	// the whole protocol stack.
+	//RLPX 协议处理函数
 	newTransport func(net.Conn, *ecdsa.PublicKey) transport
-	newPeerHook  func(*Peer)
-	listenFunc   func(network, addr string) (net.Listener, error)
+	//新节点回调
+	newPeerHook func(*Peer)
+	//网络监听连接后的处理函数
+	listenFunc func(network, addr string) (net.Listener, error)
 
 	lock    sync.Mutex // protects running
 	running bool
@@ -181,6 +184,7 @@ type Server struct {
 	peerFeed     event.Feed
 	log          log.Logger
 
+	//本地数据库
 	nodedb    *enode.DB
 	localnode *enode.LocalNode
 	ntab      *discover.UDPv4
@@ -439,8 +443,11 @@ func (s *sharedUDPConn) Close() error {
 // Start starts running the server.
 // Servers can not be re-used after stopping.
 func (srv *Server) Start() (err error) {
+	//启动全过程加锁
 	srv.lock.Lock()
 	defer srv.lock.Unlock()
+
+	//状态检查
 	if srv.running {
 		return errors.New("server already running")
 	}
@@ -455,11 +462,11 @@ func (srv *Server) Start() (err error) {
 	if srv.NoDial && srv.ListenAddr == "" {
 		srv.log.Warn("P2P server will be useless, neither dialing nor listening")
 	}
-
 	// static fields
 	if srv.PrivateKey == nil {
 		return errors.New("Server.PrivateKey must be set to a non-nil key")
 	}
+
 	//绑定协议握手函数
 	if srv.newTransport == nil {
 		srv.newTransport = newRLPX
@@ -468,6 +475,8 @@ func (srv *Server) Start() (err error) {
 	if srv.listenFunc == nil {
 		srv.listenFunc = net.Listen
 	}
+
+	//初始化信号量
 	srv.quit = make(chan struct{})
 	srv.delpeer = make(chan peerDrop)
 	srv.checkpointPostHandshake = make(chan *conn)
@@ -477,18 +486,12 @@ func (srv *Server) Start() (err error) {
 	srv.peerOp = make(chan peerOpFunc)
 	srv.peerOpDone = make(chan struct{})
 
-	/**
-	设置本地节点setupLocalNode
-	srv.ourHandshake
-	srv.nodedb
-	srv.localnode
-	srv.localnode.SetStaticIP
-	*/
+	//初始化LocalNode数据结构和DB，没有网络操作
 	if err := srv.setupLocalNode(); err != nil {
 		return err
 	}
 
-	//监听TCP连接请求，并执行两次握手
+	//打开监听端口，并执行两次握手
 	if srv.ListenAddr != "" {
 		if err := srv.setupListening(); err != nil {
 			return err
@@ -510,6 +513,14 @@ func (srv *Server) Start() (err error) {
 	return nil
 }
 
+//初始化如下字段
+/**
+srv.ourHandshake
+srv.nodedb
+srv.localnode
+srv.localnode.SetFallbackIP
+srv.localnode.SetStaticIP
+*/
 func (srv *Server) setupLocalNode() error {
 	// Create the devp2p handshake.
 	//构造协议握手数据结构 protoHandshake
@@ -560,7 +571,7 @@ func (srv *Server) setupLocalNode() error {
 	return nil
 }
 
-//启动节点发现
+// 启动节点发现
 func (srv *Server) setupDiscovery() error {
 	srv.discmix = enode.NewFairMix(discmixTimeout)
 
@@ -651,7 +662,7 @@ func (srv *Server) setupDiscovery() error {
 	return nil
 }
 
-//启动连接定时器
+// 启动连接定时器
 func (srv *Server) setupDialScheduler() {
 	//定时器配置
 	config := dialConfig{
@@ -697,14 +708,18 @@ func (srv *Server) maxDialedConns() (limit int) {
 }
 
 /*
-*
-srv.listener
-srv.localnode.Set(enr.TCP(tcp.Port))  optional NAT
+打开本地监控端口
+解决NAT tcp端口映射
+处理网络请求，核心逻辑
+
+	接受请求(最大并行逻辑)
+	IP黑名单过滤
+	启动两次握手协议
 */
 func (srv *Server) setupListening() error {
 	// Launch the listener.
-	// 调用系统api获得TCP监听器 net.Listen()
 	listener, err := srv.listenFunc("tcp", srv.ListenAddr)
+	log.Debug("服务器启动", "监听套接字", listener.Addr().String())
 	if err != nil {
 		return err
 	}
@@ -727,7 +742,7 @@ func (srv *Server) setupListening() error {
 	}
 
 	srv.loopWG.Add(1)
-	//启动协程处理请求 defer loopWG.Done()
+	//初始化50个可用连接信号量，监听并处理网络请求
 	go srv.listenLoop()
 	return nil
 }
@@ -808,10 +823,11 @@ running:
 		case c := <-srv.checkpointAddPeer: //协议握手完毕
 			// At this point the connection is past the protocol handshake.
 			// Its capabilities are known and the remote identity is verified.
+			//对连接条件进行检查
 			err := srv.addPeerChecks(peers, inboundCount, c)
 			if err == nil {
 				// The handshakes are done and it passed all checks.
-				//根据conn构建对端节点
+				//根据conn构建peer（已连接的远程节点）
 				p := srv.launchPeer(c)
 				//加入已连接节点
 				peers[c.node.ID()] = p
@@ -862,6 +878,7 @@ running:
 	}
 }
 
+// 各种检查，通过返回nil
 func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount int, c *conn) error {
 	switch {
 	case !c.is(trustedConn) && len(peers) >= srv.MaxPeers:
@@ -890,7 +907,7 @@ func (srv *Server) addPeerChecks(peers map[enode.ID]*Peer, inboundCount int, c *
 // listenLoop runs in its own goroutine and accepts
 // inbound connections.
 func (srv *Server) listenLoop() {
-	srv.log.Debug("TCP listener up", "addr", srv.listener.Addr())
+	srv.log.Debug("服务端节点监听TCP连接", "addr", srv.listener.Addr())
 
 	// The slots channel limits accepts of new connections.
 	//默认50个连接
@@ -964,8 +981,9 @@ func (srv *Server) listenLoop() {
 			srv.log.Trace("Accepted connection", "addr", fd.RemoteAddr())
 		}
 		go func() {
-			//执行两次握手，网络连接 -> conn
+			//网络连接完毕，启动两次握手，fd -> conn
 			srv.SetupConn(fd, inboundConn, nil)
+			//归还可用网络连接信号量
 			slots <- struct{}{}
 		}()
 	}
@@ -994,15 +1012,19 @@ func (srv *Server) checkInboundConn(remoteIP net.IP) error {
 // SetupConn runs the handshakes and attempts to add the connection
 // as a peer. It returns when the connection has been added as a peer
 // or the handshakes have failed.
+// 启动握手，协商结束后将连接封装成远端节点对象peer
 func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) error {
-	//构造conn对象
+
+	//conn是对底层网络连接进行包装，并加上握手相关的信息
 	c := &conn{fd: fd, flags: flags, cont: make(chan error)}
+
 	//实现协议握手接口 Transport.go 54行
 	if dialDest == nil {
 		c.transport = srv.newTransport(fd, nil)
 	} else {
 		c.transport = srv.newTransport(fd, dialDest.Pubkey())
 	}
+
 	//基于net.conn开启握手协商，并给run方法发送对应管道
 	err := srv.setupConn(c, flags, dialDest)
 	if err != nil {
@@ -1042,6 +1064,7 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 		srv.log.Trace("Failed RLPx handshake", "addr", c.fd.RemoteAddr(), "conn", c.flags, "err", err)
 		return err
 	}
+
 	//对端节点，指定或者从连接信息中取
 	if dialDest != nil {
 		c.node = dialDest
@@ -1057,7 +1080,7 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 	}
 
 	// Run the capability negotiation handshake.
-	//协议握手？
+	//协议握手
 	phs, err := c.doProtoHandshake(srv.ourHandshake)
 	if err != nil {
 		clog.Trace("Failed p2p handshake", "err", err)
@@ -1068,9 +1091,10 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 		clog.Trace("Wrong devp2p handshake identity", "phsid", hex.EncodeToString(phs.ID))
 		return DiscUnexpectedIdentity
 	}
-	//握手结果
+	//握手成功，完善c的信息
 	c.caps, c.name = phs.Caps, phs.Name
-	//阻塞直到 checkpointAddPeer 管道可写
+
+	//把c写入checkpointAddPeer，run方法负责把c封装成peer并添加到已连接节点列表
 	err = srv.checkpoint(c, srv.checkpointAddPeer)
 	if err != nil {
 		clog.Trace("Rejected peer", "err", err)
@@ -1105,14 +1129,14 @@ func (srv *Server) checkpoint(c *conn, stage chan<- *conn) error {
 }
 
 func (srv *Server) launchPeer(c *conn) *Peer {
-	//构建节点
+	//peer代表已连接的远程节点
 	p := newPeer(srv.log, c, srv.Protocols)
 	if srv.EnableMsgEvents {
 		// If message events are enabled, pass the peerFeed
 		// to the peer.
 		p.events = &srv.peerFeed
 	}
-	//异步启动
+	//异步启动peer
 	go srv.runPeer(p)
 	return p
 }

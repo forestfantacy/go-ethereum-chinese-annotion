@@ -20,6 +20,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"net"
@@ -110,6 +111,8 @@ func TestServerListen(t *testing.T) {
 
 	select {
 	case peer := <-connected:
+		fmt.Printf("本地客户端节点connected：服务端节点  %v， 远端节点%v\n", peer.LocalAddr(), peer.RemoteAddr())
+
 		if peer.LocalAddr().String() != conn.RemoteAddr().String() {
 			t.Errorf("peer started with wrong conn: got %v, want %v",
 				peer.LocalAddr(), conn.RemoteAddr())
@@ -126,41 +129,53 @@ func TestServerListen(t *testing.T) {
 func TestServerDial(t *testing.T) {
 	// 定义本地端口监听器
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	fmt.Printf("本地客户端节点监听 %v\n", listener.Addr().String())
+
 	if err != nil {
 		t.Fatalf("could not setup listener: %v", err)
 	}
 	defer listener.Close()
 
-	//处理通道的accepted状态
+	//接收到1个net.conn，交给管道accepted
 	accepted := make(chan net.Conn, 1)
 	go func() {
 		conn, err := listener.Accept()
 		if err != nil {
 			return
 		}
+		fmt.Printf("本地客户端节点accept事件：接收到1个conn，写入接收管道accepted %v,发送方[%v],接收方[%v]\n", conn, conn.LocalAddr(), conn.RemoteAddr())
 		accepted <- conn
 	}()
 
-	// 初始化管道
+	// 已连接的端点管道
 	connected := make(chan *Peer)
-	//初始化公钥、私钥
+	//初始化公钥、私钥  TODO &newkey() 与 newkey()的区别
 	remid := &newkey().PublicKey
-	//指定公钥、接收管道构建server
+	//指定公钥、接收管道启动服务端节点，如果有新节点加入，交给连接管道 connected
 	srv := startTestServer(t, remid, func(p *Peer) { connected <- p })
+
+	//释放资源
 	defer close(connected)
 	defer srv.Stop()
 
 	// tell the server to connect
+	//监听地址
 	tcpAddr := listener.Addr().(*net.TCPAddr)
+	//客户端节点公钥标识，节点地址，端口 -> 客户端节点
 	node := enode.NewV4(remid, tcpAddr.IP, tcpAddr.Port, 0)
+	fmt.Printf("客户端发现节点 NewV4 %v\n", node.String())
+
+	//客户端节点加入服务端节点的静态节点组
 	srv.AddPeer(node)
 
 	select {
-	case conn := <-accepted:
+	case conn := <-accepted: // 接收管道有可读
 		defer conn.Close()
 
 		select {
-		case peer := <-connected:
+		case peer := <-connected: //153行 startTestServer 服务端启动的回调函数负责写入，以下处理逻辑：获取svr的peer的信息，以及修改srv的trust peer信息
+			fmt.Printf("本地客户端节点connected：服务端节点 %v 远端%v \n", peer.LocalAddr(), peer.RemoteAddr())
+
 			if peer.ID() != enode.PubkeyToIDV4(remid) {
 				t.Errorf("peer has wrong id")
 			}
@@ -203,13 +218,14 @@ func TestServerDial(t *testing.T) {
 			t.Error("server did not launch peer within one second")
 		}
 
-	case <-time.After(1 * time.Second):
+	case <-time.After(1 * time.Second): //空闲超过1s退出
 		t.Error("server did not connect within one second")
 	}
 }
 
 // This test checks that RemovePeer disconnects the peer if it is connected.
 func TestServerRemovePeerDisconnect(t *testing.T) {
+	//srv 没起端口
 	srv1 := &Server{Config: Config{
 		PrivateKey:  newkey(),
 		MaxPeers:    1,
