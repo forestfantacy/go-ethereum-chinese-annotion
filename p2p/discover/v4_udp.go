@@ -64,16 +64,24 @@ const (
 )
 
 // UDPv4 implements the v4 wire protocol.
+// UDPv4协议结构体
 type UDPv4 struct {
-	conn        UDPConn
-	log         log.Logger
+	//读写能力
+	conn UDPConn
+	log  log.Logger
+	//ip黑名单
 	netrestrict *netutil.Netlist
-	priv        *ecdsa.PrivateKey
-	localNode   *enode.LocalNode
-	db          *enode.DB
-	tab         *Table
-	closeOnce   sync.Once
-	wg          sync.WaitGroup
+	//本地节点私钥
+	priv *ecdsa.PrivateKey
+	//本地节点记录
+	localNode *enode.LocalNode
+	//本地数据库，持久化节点数据
+	db *enode.DB
+	//节点表
+	tab *Table
+	//信号量
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 
 	addReplyMatcher chan *replyMatcher
 	gotreply        chan reply
@@ -117,7 +125,9 @@ type replyMatcher struct {
 type replyMatchFunc func(v4wire.Packet) (matched bool, requestDone bool)
 
 // reply is a reply packet from a certain node.
+// 回执代表从某节点的回复消息数据包
 type reply struct {
+	//来源节点
 	from enode.ID
 	ip   net.IP
 	data v4wire.Packet
@@ -129,28 +139,35 @@ type reply struct {
 func ListenV4(c UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv4, error) {
 	cfg = cfg.withDefaults()
 	closeCtx, cancel := context.WithCancel(context.Background())
+	//构建
 	t := &UDPv4{
 		conn:            newMeteredConn(c),
 		priv:            cfg.PrivateKey,
 		netrestrict:     cfg.NetRestrict,
 		localNode:       ln,
-		db:              ln.Database(),
+		db:              ln.Database(), //本地节点的本地库
 		gotreply:        make(chan reply),
 		addReplyMatcher: make(chan *replyMatcher),
 		closeCtx:        closeCtx,
 		cancelCloseCtx:  cancel,
 		log:             cfg.Log,
 	}
-
+	//构建节点表，来自之前持久化到db的和配置的初始节点
 	tab, err := newTable(t, ln.Database(), cfg.Bootnodes, t.log)
 	if err != nil {
 		return nil, err
 	}
 	t.tab = tab
+
+	//节点表的定时任务：保持节点表的最新状态
 	go tab.loop()
 
 	t.wg.Add(2)
+
+	//刷新定时任务
 	go t.loop()
+
+	//读取并处理udp连接的入站数据包
 	go t.readLoop(cfg.Unhandled)
 	return t, nil
 }
@@ -172,6 +189,7 @@ func (t *UDPv4) Close() {
 
 // Resolve searches for a specific node with the given ID and tries to get the most recent
 // version of the node record for it. It returns n if the node could not be resolved.
+// 根据指定的节点id查询最近版本的节点记录
 func (t *UDPv4) Resolve(n *enode.Node) *enode.Node {
 	// Try asking directly. This works if the node is still responding on the endpoint we have.
 	if rn, err := t.RequestENR(n); err == nil {
@@ -223,6 +241,7 @@ func (t *UDPv4) ping(n *enode.Node) (seq uint64, err error) {
 
 // sendPing sends a ping message to the given node and invokes the callback
 // when the reply arrives.
+// 向指定节点发送ping包，如果收到响应调用回调函数
 func (t *UDPv4) sendPing(toid enode.ID, toaddr *net.UDPAddr, callback func()) *replyMatcher {
 	req := t.makePing(toaddr)
 	packet, hash, err := v4wire.Encode(t.priv, req)
@@ -257,6 +276,7 @@ func (t *UDPv4) makePing(toaddr *net.UDPAddr) *v4wire.Ping {
 }
 
 // LookupPubkey finds the closest nodes to the given public key.
+// 根据指定公钥查找最近的节点
 func (t *UDPv4) LookupPubkey(key *ecdsa.PublicKey) []*enode.Node {
 	if t.tab.len() == 0 {
 		// All nodes were dropped, refresh. The very first query will hit this
@@ -298,6 +318,7 @@ func (t *UDPv4) newLookup(ctx context.Context, targetKey encPubkey) *lookup {
 
 // findnode sends a findnode request to the given node and waits until
 // the node has sent up to k neighbors.
+// 向指定的节点发送查询消息，直到消息被转发给k个邻居
 func (t *UDPv4) findnode(toid enode.ID, toaddr *net.UDPAddr, target v4wire.Pubkey) ([]*node, error) {
 	t.ensureBond(toid, toaddr)
 
@@ -335,6 +356,7 @@ func (t *UDPv4) findnode(toid enode.ID, toaddr *net.UDPAddr, target v4wire.Pubke
 }
 
 // RequestENR sends ENRRequest to the given node and waits for a response.
+// 向指定节点发送ENR请求
 func (t *UDPv4) RequestENR(n *enode.Node) (*enode.Node, error) {
 	addr := &net.UDPAddr{IP: n.IP(), Port: n.UDP()}
 	t.ensureBond(n.ID(), addr)
@@ -404,6 +426,7 @@ func (t *UDPv4) handleReply(from enode.ID, fromIP net.IP, req v4wire.Packet) boo
 
 // loop runs in its own goroutine. it keeps track of
 // the refresh timer and the pending reply queue.
+// 刷新replyMatcher定时任务，replyMatcher是啥
 func (t *UDPv4) loop() {
 	defer t.wg.Done()
 
@@ -440,20 +463,21 @@ func (t *UDPv4) loop() {
 	}
 
 	for {
+		//超时重置各种状态
 		resetTimeout()
 
 		select {
-		case <-t.closeCtx.Done():
+		case <-t.closeCtx.Done(): //退出
 			for el := plist.Front(); el != nil; el = el.Next() {
 				el.Value.(*replyMatcher).errc <- errClosed
 			}
 			return
 
-		case p := <-t.addReplyMatcher:
+		case p := <-t.addReplyMatcher: //把replyMatcher添加到列表
 			p.deadline = time.Now().Add(respTimeout)
 			plist.PushBack(p)
 
-		case r := <-t.gotreply:
+		case r := <-t.gotreply: //查询匹配replyMatcher
 			var matched bool // whether any replyMatcher considered the reply acceptable.
 			for el := plist.Front(); el != nil; el = el.Next() {
 				p := el.Value.(*replyMatcher)
@@ -472,7 +496,7 @@ func (t *UDPv4) loop() {
 			}
 			r.matched <- matched
 
-		case now := <-timeout.C:
+		case now := <-timeout.C: //超时后处理
 			nextTimeout = nil
 
 			// Notify and remove callbacks whose deadline is in the past.
@@ -496,6 +520,7 @@ func (t *UDPv4) loop() {
 	}
 }
 
+// 编码数据包，向指定udp地址发送
 func (t *UDPv4) send(toaddr *net.UDPAddr, toid enode.ID, req v4wire.Packet) ([]byte, error) {
 	packet, hash, err := v4wire.Encode(t.priv, req)
 	if err != nil {
@@ -504,6 +529,7 @@ func (t *UDPv4) send(toaddr *net.UDPAddr, toid enode.ID, req v4wire.Packet) ([]b
 	return hash, t.write(toaddr, toid, req.Name(), packet)
 }
 
+// 向指定udp地址发送字节流
 func (t *UDPv4) write(toaddr *net.UDPAddr, toid enode.ID, what string, packet []byte) error {
 	_, err := t.conn.WriteToUDP(packet, toaddr)
 	t.log.Trace(">> "+what, "id", toid, "addr", toaddr, "err", err)
@@ -511,6 +537,7 @@ func (t *UDPv4) write(toaddr *net.UDPAddr, toid enode.ID, what string, packet []
 }
 
 // readLoop runs in its own goroutine. it handles incoming UDP packets.
+// 处理接收进来的UDP数据包
 func (t *UDPv4) readLoop(unhandled chan<- ReadPacket) {
 	defer t.wg.Done()
 	if unhandled != nil {
@@ -523,16 +550,21 @@ func (t *UDPv4) readLoop(unhandled chan<- ReadPacket) {
 		if netutil.IsTemporaryError(err) {
 			// Ignore temporary read errors.
 			t.log.Debug("Temporary UDP read error", "err", err)
+			//临时错误忽略
 			continue
 		} else if err != nil {
 			// Shut down the loop for permanent errors.
 			if !errors.Is(err, io.EOF) {
 				t.log.Debug("UDP read error", "err", err)
 			}
+			//发生错误退出
 			return
 		}
+
+		//处理数据包
 		if t.handlePacket(from, buf[:nbytes]) != nil && unhandled != nil {
 			select {
+			//重新构建1个只读数据包交给未处理管道
 			case unhandled <- ReadPacket{buf[:nbytes], from}:
 			default:
 			}
@@ -540,19 +572,25 @@ func (t *UDPv4) readLoop(unhandled chan<- ReadPacket) {
 	}
 }
 
+// 处理数据包的主流程
 func (t *UDPv4) handlePacket(from *net.UDPAddr, buf []byte) error {
+	//反序列化得到UDPv4
 	rawpacket, fromKey, hash, err := v4wire.Decode(buf)
 	if err != nil {
 		t.log.Debug("Bad discv4 packet", "addr", from, "err", err)
 		return err
 	}
+
+	//根据包类型封装对应业务的处理函数
 	packet := t.wrapPacket(rawpacket)
 	fromID := fromKey.ID()
 	if err == nil && packet.preverify != nil {
 		err = packet.preverify(packet, from, fromID, fromKey)
 	}
 	t.log.Trace("<< "+packet.Name(), "id", fromID, "addr", from, "err", err)
+
 	if err == nil && packet.handle != nil {
+		//处理逻辑包括：修改UDPv4的状态或者发送回执等操作
 		packet.handle(packet, from, fromID, hash)
 	}
 	return err

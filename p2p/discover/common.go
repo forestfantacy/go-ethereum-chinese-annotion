@@ -28,6 +28,7 @@ import (
 )
 
 // UDPConn is a network connection on which discovery can operate.
+// 具备UDP读写能力的连接
 type UDPConn interface {
 	ReadFromUDP(b []byte) (n int, addr *net.UDPAddr, err error)
 	WriteToUDP(b []byte, addr *net.UDPAddr) (n int, err error)
@@ -40,15 +41,18 @@ type V5Config struct {
 }
 
 // Config holds settings for the discovery listener.
+// 发现监听器的配置
 type Config struct {
 	// These settings are required and configure the UDP listener:
 	PrivateKey *ecdsa.PrivateKey
 
 	// These settings are optional:
-	NetRestrict *netutil.Netlist  // list of allowed IP networks
-	Bootnodes   []*enode.Node     // list of bootstrap nodes
-	Unhandled   chan<- ReadPacket // unhandled packets are sent on this channel
-	Log         log.Logger        // if set, log messages go here
+	NetRestrict *netutil.Netlist // list of allowed IP networks
+	//初始节点
+	Bootnodes []*enode.Node // list of bootstrap nodes
+	//未处理的包管道
+	Unhandled chan<- ReadPacket // unhandled packets are sent on this channel
+	Log       log.Logger        // if set, log messages go here
 
 	// V5ProtocolID configures the discv5 protocol identifier.
 	V5ProtocolID *[6]byte

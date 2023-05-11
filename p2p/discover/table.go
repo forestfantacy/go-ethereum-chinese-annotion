@@ -39,8 +39,10 @@ import (
 )
 
 const (
-	alpha           = 3  // Kademlia concurrency factor
-	bucketSize      = 16 // Kademlia bucket size
+	alpha = 3 // Kademlia concurrency factor
+	//每个桶最多放16个节点
+	bucketSize = 16 // Kademlia bucket size
+	//候补节点列表长度10
 	maxReplacements = 10 // Size of per-bucket replacement list
 
 	// We keep buckets for the upper 1/15 of distances because
@@ -50,6 +52,7 @@ const (
 	bucketMinDistance = hashBits - nBuckets // Log distance of closest bucket
 
 	// IP address limits.
+	//来自相同C类子网最多只能有2个IP
 	bucketIPLimit, bucketSubnet = 2, 24 // at most 2 addresses from the same /24
 	tableIPLimit, tableSubnet   = 10, 24
 
@@ -64,16 +67,23 @@ const (
 // Table is the 'node table', a Kademlia-like index of neighbor nodes. The table keeps
 // itself up-to-date by verifying the liveness of neighbors and requesting their node
 // records when announcements of a new record version are received.
+// 节点表用来存储邻近节点，并保持节点列表始终是最新状态
 type Table struct {
-	mutex   sync.Mutex        // protects buckets, bucket content, nursery, rand
+	mutex sync.Mutex // protects buckets, bucket content, nursery, rand
+	//17个桶
 	buckets [nBuckets]*bucket // index of known nodes by distance
-	nursery []*node           // bootstrap nodes
-	rand    *mrand.Rand       // source of randomness, periodically reseeded
-	ips     netutil.DistinctNetSet
+	//初始节点
+	nursery []*node // bootstrap nodes
+	//随机数生成器
+	rand *mrand.Rand // source of randomness, periodically reseeded
+	//ip限制
+	ips netutil.DistinctNetSet
 
-	log        log.Logger
-	db         *enode.DB // database of known nodes
-	net        transport
+	log log.Logger
+	db  *enode.DB // database of known nodes
+	//传输层协议
+	net transport
+	//各种信号量
 	refreshReq chan chan struct{}
 	initDone   chan struct{}
 	closeReq   chan struct{}
@@ -83,6 +93,7 @@ type Table struct {
 }
 
 // transport is implemented by the UDP transports.
+// UDP传输层业务，v4 v5 两种实现
 type transport interface {
 	Self() *enode.Node
 	RequestENR(*enode.Node) (*enode.Node, error)
@@ -93,8 +104,11 @@ type transport interface {
 
 // bucket contains nodes, ordered by their last activity. the entry
 // that was most recently active is the first element in entries.
+// K桶用于存一组节点
 type bucket struct {
-	entries      []*node // live entries, sorted by time of last contact
+	//在线节点，按活跃时间排序
+	entries []*node // live entries, sorted by time of last contact
+	//替补？
 	replacements []*node // recently seen nodes to be used if revalidation fails
 	ips          netutil.DistinctNetSet
 }
@@ -114,21 +128,27 @@ func newTable(t transport, db *enode.DB, bootnodes []*enode.Node, log log.Logger
 	if err := tab.setFallbackNodes(bootnodes); err != nil {
 		return nil, err
 	}
+	//初始化空桶，桶里没有节点
 	for i := range tab.buckets {
 		tab.buckets[i] = &bucket{
 			ips: netutil.DistinctNetSet{Subnet: bucketSubnet, Limit: bucketIPLimit},
 		}
 	}
+	//初始化随机数生成器
 	tab.seedRand()
+
+	//从数据库和配置中加载种子节点，然后根据节点id把节点加入对应k桶
 	tab.loadSeedNodes()
 
 	return tab, nil
 }
 
+//返回当前节点
 func (tab *Table) self() *enode.Node {
 	return tab.net.Self()
 }
 
+//初始化节点表的随机数源
 func (tab *Table) seedRand() {
 	var b [8]byte
 	crand.Read(b[:])
@@ -140,6 +160,7 @@ func (tab *Table) seedRand() {
 
 // ReadRandomNodes fills the given slice with random nodes from the table. The results
 // are guaranteed to be unique for a single invocation, no node will appear twice.
+//获取当前节点表中所有的节点，打乱原顺序，放入列表
 func (tab *Table) ReadRandomNodes(buf []*enode.Node) (n int) {
 	if !tab.isInitDone() {
 		return 0
@@ -147,6 +168,7 @@ func (tab *Table) ReadRandomNodes(buf []*enode.Node) (n int) {
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
 
+	//遍历节点表 所有的桶 所有节点
 	var nodes []*enode.Node
 	for _, b := range &tab.buckets {
 		for _, n := range b.entries {
@@ -166,7 +188,10 @@ func (tab *Table) getNode(id enode.ID) *enode.Node {
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
 
+	//定位桶
 	b := tab.bucket(id)
+
+	//顺序扫id
 	for _, e := range b.entries {
 		if e.ID() == id {
 			return unwrapNode(e)
@@ -215,6 +240,7 @@ func (tab *Table) refresh() <-chan struct{} {
 }
 
 // loop schedules runs of doRefresh, doRevalidate and copyLiveNodes.
+// 节点表的定时任务：保持节点表的最新状态
 func (tab *Table) loop() {
 	var (
 		revalidate     = time.NewTimer(tab.nextRevalidateTime())
@@ -229,41 +255,43 @@ func (tab *Table) loop() {
 	defer copyNodes.Stop()
 
 	// Start initial refresh.
+	//启动刷新
 	go tab.doRefresh(refreshDone)
 
-loop:
+loop: //定时刷新
 	for {
 		select {
-		case <-refresh.C:
+		case <-refresh.C: //刷新节点表
 			tab.seedRand()
 			if refreshDone == nil {
 				refreshDone = make(chan struct{})
 				go tab.doRefresh(refreshDone)
 			}
-		case req := <-tab.refreshReq:
+		case req := <-tab.refreshReq: //根据刷新请求排队执行刷新
 			waiting = append(waiting, req)
 			if refreshDone == nil {
 				refreshDone = make(chan struct{})
 				go tab.doRefresh(refreshDone)
 			}
-		case <-refreshDone:
+		case <-refreshDone: //刷新完毕后回收资源
 			for _, ch := range waiting {
 				close(ch)
 			}
 			waiting, refreshDone = nil, nil
-		case <-revalidate.C:
+		case <-revalidate.C: //重新选举
 			revalidateDone = make(chan struct{})
 			go tab.doRevalidate(revalidateDone)
-		case <-revalidateDone:
+		case <-revalidateDone: //重新选举结束
 			revalidate.Reset(tab.nextRevalidateTime())
 			revalidateDone = nil
 		case <-copyNodes.C:
-			go tab.copyLiveNodes()
+			go tab.copyLiveNodes() //拷贝存活节点
 		case <-tab.closeReq:
 			break loop
 		}
 	}
 
+	//退出后回收资源
 	if refreshDone != nil {
 		<-refreshDone
 	}
@@ -278,15 +306,19 @@ loop:
 
 // doRefresh performs a lookup for a random target to keep buckets full. seed nodes are
 // inserted if the table is empty (initial bootstrap or discarded faulty peers).
+// 保持节点表的最新状态
 func (tab *Table) doRefresh(done chan struct{}) {
 	defer close(done)
 
 	// Load nodes from the database and insert
 	// them. This should yield a few previously seen nodes that are
 	// (hopefully) still alive.
+
+	//加载种子节点：数据库 & 配置
 	tab.loadSeedNodes()
 
 	// Run self lookup to discover new neighbor nodes.
+	//发现邻居节点
 	tab.net.lookupSelf()
 
 	// The Kademlia paper specifies that the bucket refresh should
@@ -300,13 +332,17 @@ func (tab *Table) doRefresh(done chan struct{}) {
 	}
 }
 
+// 加载种子节点：数据库 & 配置
 func (tab *Table) loadSeedNodes() {
+	//在数据库里查询5天内的30个种子节点
 	seeds := wrapNodes(tab.db.QuerySeeds(seedCount, seedMaxAge))
+	//与配置的初始节点合并
 	seeds = append(seeds, tab.nursery...)
 	for i := range seeds {
 		seed := seeds[i]
 		age := log.Lazy{Fn: func() interface{} { return time.Since(tab.db.LastPongReceived(seed.ID(), seed.IP())) }}
 		tab.log.Trace("Found seed node in database", "id", seed.ID(), "addr", seed.addr(), "age", age)
+		//把节点放入k桶里
 		tab.addSeenNode(seed)
 	}
 }
@@ -378,6 +414,7 @@ func (tab *Table) nextRevalidateTime() time.Duration {
 
 // copyLiveNodes adds nodes from the table to the database if they have been in the table
 // longer than seedMinTableTime.
+// 将节点表中存活足够长的节点写入数据库
 func (tab *Table) copyLiveNodes() {
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
@@ -399,6 +436,7 @@ func (tab *Table) copyLiveNodes() {
 // preferLive is true and the table contains any verified nodes, the result will not
 // contain unverified nodes. However, if there are no verified nodes at all, the result
 // will contain unverified nodes.
+// 根据id查询最近节点
 func (tab *Table) findnodeByID(target enode.ID, nresults int, preferLive bool) *nodesByDistance {
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
@@ -443,11 +481,13 @@ func (tab *Table) bucketLen(id enode.ID) int {
 }
 
 // bucket returns the bucket for the given node ID hash.
+// 根据节点id查询桶
 func (tab *Table) bucket(id enode.ID) *bucket {
 	d := enode.LogDist(tab.self().ID(), id)
 	return tab.bucketAtDistance(d)
 }
 
+// 根据距离查询桶
 func (tab *Table) bucketAtDistance(d int) *bucket {
 	if d <= bucketMinDistance {
 		return tab.buckets[0]
@@ -460,6 +500,7 @@ func (tab *Table) bucketAtDistance(d int) *bucket {
 // added to the replacements list.
 //
 // The caller must not hold tab.mutex.
+// 根据节点id把节点加入对应k桶，如果桶有空间则直接加入，否则放到候补列表
 func (tab *Table) addSeenNode(n *node) {
 	if n.ID() == tab.self().ID() {
 		return
@@ -467,22 +508,33 @@ func (tab *Table) addSeenNode(n *node) {
 
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
+
+	//根据节点id定位到桶
 	b := tab.bucket(n.ID())
+
+	//节点已经在桶里直接返回
 	if contains(b.entries, n.ID()) {
 		// Already in bucket, don't add.
 		return
 	}
+
+	//当前桶满了，超过16个了，还可以放候补列表
 	if len(b.entries) >= bucketSize {
 		// Bucket full, maybe add as replacement.
 		tab.addReplacement(b, n)
 		return
 	}
+
+	//IP限制校验不通过，返回
 	if !tab.addIP(b, n.IP()) {
 		// Can't add: IP limit reached.
 		return
 	}
+
 	// Add to end of bucket:
+	//加桶
 	b.entries = append(b.entries, n)
+	//之前可能因为桶满了，先放入了候选列表
 	b.replacements = deleteNode(b.replacements, n)
 	n.addedAt = time.Now()
 	if tab.nodeAddedHook != nil {
@@ -499,6 +551,7 @@ func (tab *Table) addSeenNode(n *node) {
 // ping repeatedly.
 //
 // The caller must not hold tab.mutex.
+// 将已验证存在的节点放到桶的前端，如果这个节点之前就存在，直接换到最前端位置，如果不存在且桶已没空间，则放入替换列表
 func (tab *Table) addVerifiedNode(n *node) {
 	if !tab.isInitDone() {
 		return
@@ -533,6 +586,7 @@ func (tab *Table) addVerifiedNode(n *node) {
 }
 
 // delete removes an entry from the node table. It is used to evacuate dead nodes.
+// 删除节点
 func (tab *Table) delete(node *node) {
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
@@ -540,6 +594,7 @@ func (tab *Table) delete(node *node) {
 	tab.deleteInBucket(tab.bucket(node.ID()), node)
 }
 
+// 校验IP
 func (tab *Table) addIP(b *bucket, ip net.IP) bool {
 	if len(ip) == 0 {
 		return false // Nodes without IP cannot be added.
@@ -586,6 +641,7 @@ func (tab *Table) addReplacement(b *bucket, n *node) {
 // replace removes n from the replacement list and replaces 'last' with it if it is the
 // last entry in the bucket. If 'last' isn't the last entry, it has either been replaced
 // with someone else or became active.
+// 从替换列表中删除节点
 func (tab *Table) replace(b *bucket, last *node) *node {
 	if len(b.entries) == 0 || b.entries[len(b.entries)-1].ID() != last.ID() {
 		// Entry has moved, don't replace it.
@@ -605,6 +661,7 @@ func (tab *Table) replace(b *bucket, last *node) *node {
 
 // bumpInBucket moves the given node to the front of the bucket entry list
 // if it is contained in that list.
+// 将指点节点移动到桶的前端位置
 func (tab *Table) bumpInBucket(b *bucket, n *node) bool {
 	for i := range b.entries {
 		if b.entries[i].ID() == n.ID() {
@@ -626,6 +683,7 @@ func (tab *Table) bumpInBucket(b *bucket, n *node) bool {
 	return false
 }
 
+// 从桶中删除节点
 func (tab *Table) deleteInBucket(b *bucket, n *node) {
 	b.entries = deleteNode(b.entries, n)
 	tab.removeIP(b, n.IP())
@@ -641,6 +699,7 @@ func contains(ns []*node, id enode.ID) bool {
 }
 
 // pushNode adds n to the front of list, keeping at most max items.
+// 从最前端插入节点列表
 func pushNode(list []*node, n *node, max int) ([]*node, *node) {
 	if len(list) < max {
 		list = append(list, nil)
@@ -652,6 +711,7 @@ func pushNode(list []*node, n *node, max int) ([]*node, *node) {
 }
 
 // deleteNode removes n from list.
+// 节点列表删除节点
 func deleteNode(list []*node, n *node) []*node {
 	for i := range list {
 		if list[i].ID() == n.ID() {
@@ -662,6 +722,7 @@ func deleteNode(list []*node, n *node) []*node {
 }
 
 // nodesByDistance is a list of nodes, ordered by distance to target.
+// 根据距离指定节点的距离排序的一组节点
 type nodesByDistance struct {
 	entries []*node
 	target  enode.ID

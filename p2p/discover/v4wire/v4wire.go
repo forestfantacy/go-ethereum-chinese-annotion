@@ -74,6 +74,7 @@ type (
 	}
 
 	// Findnode is a query for nodes close to the given target.
+	//查询目标节点的邻近节点
 	Findnode struct {
 		Target     Pubkey
 		Expiration uint64
@@ -90,6 +91,7 @@ type (
 	}
 
 	// ENRRequest queries for the remote node's record.
+	//查询远程节点记录
 	ENRRequest struct {
 		Expiration uint64
 		// Ignore additional fields (for forward compatibility).

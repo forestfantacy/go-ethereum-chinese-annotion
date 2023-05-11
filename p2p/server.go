@@ -442,6 +442,7 @@ func (s *sharedUDPConn) Close() error {
 
 // Start starts running the server.
 // Servers can not be re-used after stopping.
+//启动主流程
 func (srv *Server) Start() (err error) {
 	//启动全过程加锁
 	srv.lock.Lock()
@@ -576,6 +577,7 @@ func (srv *Server) setupDiscovery() error {
 	srv.discmix = enode.NewFairMix(discmixTimeout)
 
 	// Add protocol-specific discovery sources.
+	//添加协议
 	added := make(map[string]bool)
 	for _, proto := range srv.Protocols {
 		if proto.DialCandidates != nil && !added[proto.Name] {
@@ -585,10 +587,12 @@ func (srv *Server) setupDiscovery() error {
 	}
 
 	// Don't listen on UDP endpoint if DHT is disabled.
+	//v4 && 未启用dht
 	if srv.NoDiscovery && !srv.DiscoveryV5 {
 		return nil
 	}
 
+	//udp协议与tcp使用相同ip
 	listenAddr := srv.ListenAddr
 
 	// Use an alternate listening address for UDP if
@@ -601,12 +605,17 @@ func (srv *Server) setupDiscovery() error {
 	if err != nil {
 		return err
 	}
+
+	//开启udp端口监听，获得udpConn，底层网络连接二次封装
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		return err
 	}
+
 	realaddr := conn.LocalAddr().(*net.UDPAddr)
 	srv.log.Debug("UDP listener up", "addr", realaddr)
+
+	//NAT
 	if srv.NAT != nil {
 		if !realaddr.IP.IsLoopback() {
 			srv.loopWG.Add(1)
@@ -621,11 +630,14 @@ func (srv *Server) setupDiscovery() error {
 	// Discovery V4
 	var unhandled chan discover.ReadPacket
 	var sconn *sharedUDPConn
+	//未设置禁用节点发现
 	if !srv.NoDiscovery {
+		//v5
 		if srv.DiscoveryV5 {
 			unhandled = make(chan discover.ReadPacket, 100)
 			sconn = &sharedUDPConn{conn, unhandled}
 		}
+		//发现配置，v4 v5 共用这个配置
 		cfg := discover.Config{
 			PrivateKey:  srv.PrivateKey,
 			NetRestrict: srv.NetRestrict,
@@ -633,6 +645,7 @@ func (srv *Server) setupDiscovery() error {
 			Unhandled:   unhandled,
 			Log:         srv.log,
 		}
+		//开启v4协议，返回UDPv4 ntab
 		ntab, err := discover.ListenV4(conn, srv.localnode, cfg)
 		if err != nil {
 			return err
@@ -650,6 +663,7 @@ func (srv *Server) setupDiscovery() error {
 			Log:         srv.log,
 		}
 		var err error
+		//开启v5协议
 		if sconn != nil {
 			srv.DiscV5, err = discover.ListenV5(sconn, srv.localnode, cfg)
 		} else {
