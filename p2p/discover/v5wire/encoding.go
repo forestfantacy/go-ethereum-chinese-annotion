@@ -38,6 +38,7 @@ import (
 // TODO rehandshake after X packets
 
 // Header represents a packet header.
+// 包头数据结构
 type Header struct {
 	IV [sizeofMaskingIV]byte
 	StaticHeader
@@ -47,6 +48,7 @@ type Header struct {
 }
 
 // StaticHeader contains the static fields of a packet header.
+// 静态字段
 type StaticHeader struct {
 	ProtocolID [6]byte
 	Version    uint16
@@ -56,6 +58,7 @@ type StaticHeader struct {
 }
 
 // Authdata layouts.
+// 认证消息
 type (
 	whoareyouAuthData struct {
 		IDNonce   [16]byte // ID proof data
@@ -142,6 +145,7 @@ var (
 
 // Codec encodes and decodes Discovery v5 packets.
 // This type is not safe for concurrent use.
+// v5 packet 编解码器
 type Codec struct {
 	sha256     hash.Hash
 	localnode  *enode.LocalNode

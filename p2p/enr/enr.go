@@ -83,7 +83,7 @@ func (m SchemeMap) NodeAddr(r *Record) []byte {
 }
 
 // Record represents a node record. The zero value is an empty record.
-// ？啥用？
+// 节点记录？
 type Record struct {
 	seq       uint64 // sequence number
 	signature []byte // the signature
@@ -134,6 +134,7 @@ func (r *Record) SetSeq(s uint64) {
 //
 // Errors returned by Load are wrapped in KeyError. You can distinguish decoding errors
 // from missing keys using the IsNotFound function.
+// 从record里加载entry
 func (r *Record) Load(e Entry) error {
 	i := sort.Search(len(r.pairs), func(i int) bool { return r.pairs[i].k >= e.ENRKey() })
 	if i < len(r.pairs) && r.pairs[i].k == e.ENRKey() {
@@ -148,6 +149,7 @@ func (r *Record) Load(e Entry) error {
 // Set adds or updates the given entry in the record. It panics if the value can't be
 // encoded. If the record is signed, Set increments the sequence number and invalidates
 // the sequence number.
+// 往record里写入entry
 func (r *Record) Set(e Entry) {
 	blob, err := rlp.EncodeToBytes(e)
 	if err != nil {
@@ -175,6 +177,7 @@ func (r *Record) Set(e Entry) {
 	r.pairs = pairs
 }
 
+// 销毁record
 func (r *Record) invalidate() {
 	if r.signature != nil {
 		r.seq++
@@ -184,6 +187,7 @@ func (r *Record) invalidate() {
 }
 
 // Signature returns the signature of the record.
+// 获取record签名
 func (r *Record) Signature() []byte {
 	if r.signature == nil {
 		return nil
@@ -195,6 +199,7 @@ func (r *Record) Signature() []byte {
 
 // EncodeRLP implements rlp.Encoder. Encoding fails if
 // the record is unsigned.
+// rlp编码
 func (r Record) EncodeRLP(w io.Writer) error {
 	if r.signature == nil {
 		return errEncodeUnsigned
@@ -204,6 +209,7 @@ func (r Record) EncodeRLP(w io.Writer) error {
 }
 
 // DecodeRLP implements rlp.Decoder. Decoding doesn't verify the signature.
+// rlp解码
 func (r *Record) DecodeRLP(s *rlp.Stream) error {
 	dec, raw, err := decodeRecord(s)
 	if err != nil {

@@ -92,6 +92,7 @@ func newHashMAC(cipher cipher.Block, h hash.Hash) hashMAC {
 
 // NewConn wraps the given network connection. If dialDest is non-nil, the connection
 // behaves as the initiator during the handshake.
+// 创建rlpx连接，dialDest为空是发起者连接，不为空是接受者连接
 func NewConn(conn net.Conn, dialDest *ecdsa.PublicKey) *Conn {
 	return &Conn{
 		dialDest: dialDest,

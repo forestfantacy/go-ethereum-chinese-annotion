@@ -32,6 +32,7 @@ const handshakeTimeout = time.Second
 
 // The SessionCache keeps negotiated encryption keys and
 // state for in-progress handshakes in the Discovery v5 wire protocol.
+// 代表协商过程中的秘钥和中间状态
 type SessionCache struct {
 	sessions   lru.BasicLRU[sessionID, *session]
 	handshakes map[sessionID]*Whoareyou
@@ -50,6 +51,7 @@ type sessionID struct {
 }
 
 // session contains session information
+// 读写秘钥
 type session struct {
 	writeKey     []byte
 	readKey      []byte
@@ -57,6 +59,7 @@ type session struct {
 }
 
 // keysFlipped returns a copy of s with the read and write keys flipped.
+// 拷贝
 func (s *session) keysFlipped() *session {
 	return &session{s.readKey, s.writeKey, s.nonceCounter}
 }

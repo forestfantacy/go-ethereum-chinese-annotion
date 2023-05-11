@@ -35,6 +35,7 @@ import (
 )
 
 // RPC packet types
+// 4种RPC业务：心跳、查找最近节点、查找ENR节点记录
 const (
 	PingPacket = iota + 1 // zero is 'reserved'
 	PongPacket
@@ -45,9 +46,11 @@ const (
 )
 
 // RPC request structures
+// RPC请求响应结构体
 type (
 	Ping struct {
-		Version    uint
+		Version uint
+		//本端、目标端
 		From, To   Endpoint
 		Expiration uint64
 		ENRSeq     uint64 `rlp:"optional"` // Sequence number of local record, added by EIP-868.
@@ -103,6 +106,7 @@ type (
 )
 
 // MaxNeighbors is the maximum number of neighbor nodes in a Neighbors packet.
+// 最大允许12个邻居
 const MaxNeighbors = 12
 
 // This code computes the MaxNeighbors constant value.
@@ -135,6 +139,7 @@ func (e Pubkey) ID() enode.ID {
 }
 
 // Node represents information about a node.
+// Node代表一个节点，除了网络属性，还有公钥作为ID标识
 type Node struct {
 	IP  net.IP // len 4 for IPv4 or 16 for IPv6
 	UDP uint16 // for discovery protocol
@@ -143,6 +148,7 @@ type Node struct {
 }
 
 // Endpoint represents a network endpoint.
+// 网络端点：IP地址和端口，UCP用于发现协议，TCP用于RLPx协议
 type Endpoint struct {
 	IP  net.IP // len 4 for IPv4 or 16 for IPv6
 	UDP uint16 // for discovery protocol
@@ -150,6 +156,7 @@ type Endpoint struct {
 }
 
 // NewEndpoint creates an endpoint.
+// 创建1个端点
 func NewEndpoint(addr *net.UDPAddr, tcpPort uint16) Endpoint {
 	ip := net.IP{}
 	if ip4 := addr.IP.To4(); ip4 != nil {
@@ -160,6 +167,7 @@ func NewEndpoint(addr *net.UDPAddr, tcpPort uint16) Endpoint {
 	return Endpoint{IP: ip, UDP: uint16(addr.Port), TCP: tcpPort}
 }
 
+// Packet 数据包接口，用于记录日志
 type Packet interface {
 	// Name is the name of the package, for logging purposes.
 	Name() string

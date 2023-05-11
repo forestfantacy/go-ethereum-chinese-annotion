@@ -105,14 +105,17 @@ func TestForwardCompatibility(t *testing.T) {
 		if err != nil {
 			t.Fatalf("invalid hex: %s", test.input)
 		}
+		//从input中反序列化，得到数据包和节点公钥
 		packet, nodekey, _, err := Decode(input)
 		if err != nil {
 			t.Errorf("did not accept packet %s\n%v", test.input, err)
 			continue
 		}
+		//对比包信息
 		if !reflect.DeepEqual(packet, test.wantPacket) {
 			t.Errorf("got %s\nwant %s", spew.Sdump(packet), spew.Sdump(test.wantPacket))
 		}
+		//对比节点公钥
 		if nodekey != wantNodeKey {
 			t.Errorf("got id %v\nwant id %v", nodekey, wantNodeKey)
 		}

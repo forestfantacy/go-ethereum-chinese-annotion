@@ -29,8 +29,9 @@ import (
 
 // Packet is implemented by all message types.
 type Packet interface {
-	Name() string        // Name returns a string corresponding to the message type.
-	Kind() byte          // Kind returns the message type.
+	Name() string // Name returns a string corresponding to the message type.
+	Kind() byte   // Kind returns the message type.
+	// RequestID v5特有
 	RequestID() []byte   // Returns the request ID.
 	SetRequestID([]byte) // Sets the request ID.
 
@@ -45,11 +46,12 @@ const (
 	PongMsg
 	FindnodeMsg
 	NodesMsg
+	// TalkRequestMsg v5特有
 	TalkRequestMsg
 	TalkResponseMsg
 	RequestTicketMsg
 	TicketMsg
-
+	// UnknownPacket v5特有
 	UnknownPacket   = byte(255) // any non-decryptable packet
 	WhoareyouPacket = byte(254) // the WHOAREYOU packet
 )

@@ -30,6 +30,7 @@ import (
 // from the connection, first call b.reset(). This empties b.data. Now perform reads
 // through b.read() until the end of the packet is reached. The complete packet data is
 // now available in b.data.
+// 缓冲读
 type readBuffer struct {
 	data []byte
 	end  int
@@ -83,6 +84,7 @@ func (b *readBuffer) grow(n int) {
 
 // writeBuffer implements buffering for network writes. This is essentially
 // a convenience wrapper around a byte slice.
+// 缓冲写
 type writeBuffer struct {
 	data []byte
 }
