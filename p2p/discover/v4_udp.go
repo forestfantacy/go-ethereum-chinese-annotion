@@ -82,11 +82,13 @@ type UDPv4 struct {
 	//信号量
 	closeOnce sync.Once
 	wg        sync.WaitGroup
-
+	//添加应答匹配器到等待应答队列
 	addReplyMatcher chan *replyMatcher
-	gotreply        chan reply
-	closeCtx        context.Context
-	cancelCloseCtx  context.CancelFunc
+	//获取应答匹配器
+	gotreply chan reply
+
+	closeCtx       context.Context
+	cancelCloseCtx context.CancelFunc
 }
 
 // replyMatcher represents a pending reply.
@@ -243,6 +245,7 @@ func (t *UDPv4) ping(n *enode.Node) (seq uint64, err error) {
 // when the reply arrives.
 // 向指定节点发送ping包，如果收到响应调用回调函数
 func (t *UDPv4) sendPing(toid enode.ID, toaddr *net.UDPAddr, callback func()) *replyMatcher {
+	//构建ping往目标的数据包
 	req := t.makePing(toaddr)
 	packet, hash, err := v4wire.Encode(t.priv, req)
 	if err != nil {
@@ -252,15 +255,20 @@ func (t *UDPv4) sendPing(toid enode.ID, toaddr *net.UDPAddr, callback func()) *r
 	}
 	// Add a matcher for the reply to the pending reply queue. Pongs are matched if they
 	// reference the ping we're about to send.
+	//添加1个应答匹配器到等待应答队列，指定请求应答匹配逻辑
 	rm := t.pending(toid, toaddr.IP, v4wire.PongPacket, func(p v4wire.Packet) (matched bool, requestDone bool) {
+		//如果接收的Pong包来源hash与发出去的ping包hash相等，则匹配成功
 		matched = bytes.Equal(p.(*v4wire.Pong).ReplyTok, hash)
 		if matched && callback != nil {
-			callback()
+			callback() //匹配回调
 		}
 		return matched, matched
 	})
+
 	// Send the packet.
+	//本地节点记录目标通讯历史
 	t.localNode.UDPContact(toaddr)
+	//发送ping包
 	t.write(toaddr, toid, req.Name(), packet)
 	return rm
 }
@@ -270,7 +278,7 @@ func (t *UDPv4) makePing(toaddr *net.UDPAddr) *v4wire.Ping {
 		Version:    4,
 		From:       t.ourEndpoint(),
 		To:         v4wire.NewEndpoint(toaddr, 0),
-		Expiration: uint64(time.Now().Add(expiration).Unix()),
+		Expiration: uint64(time.Now().Add(expiration).Unix()), //20s
 		ENRSeq:     t.localNode.Node().Seq(),
 	}
 }
@@ -278,6 +286,7 @@ func (t *UDPv4) makePing(toaddr *net.UDPAddr) *v4wire.Ping {
 // LookupPubkey finds the closest nodes to the given public key.
 // 根据指定公钥查找最近的节点
 func (t *UDPv4) LookupPubkey(key *ecdsa.PublicKey) []*enode.Node {
+	//如果当前节点表是空的，先走refresh流程
 	if t.tab.len() == 0 {
 		// All nodes were dropped, refresh. The very first query will hit this
 		// case and run the bootstrapping logic.
@@ -297,20 +306,29 @@ func (t *UDPv4) lookupRandom() []*enode.Node {
 }
 
 // lookupSelf implements transport.
+// 查找自己的邻居节点
 func (t *UDPv4) lookupSelf() []*enode.Node {
 	return t.newLookup(t.closeCtx, encodePubkey(&t.priv.PublicKey)).run()
 }
 
+// 查找随机节点的邻居节点
 func (t *UDPv4) newRandomLookup(ctx context.Context) *lookup {
+	//得到随机数作为target
 	var target encPubkey
 	crand.Read(target[:])
+
 	return t.newLookup(ctx, target)
 }
 
+// 构建新的查找结构体
 func (t *UDPv4) newLookup(ctx context.Context, targetKey encPubkey) *lookup {
+	//根据随机数创建节点id
 	target := enode.ID(crypto.Keccak256Hash(targetKey[:]))
+	//根据随机数创建公钥
 	ekey := v4wire.Pubkey(targetKey)
+	//构建新的查找
 	it := newLookup(ctx, t.tab, target, func(n *node) ([]*node, error) {
+		//查询核心逻辑，如何找到指定节点的邻居节点
 		return t.findnode(n.ID(), n.addr(), ekey)
 	})
 	return it
@@ -318,7 +336,7 @@ func (t *UDPv4) newLookup(ctx context.Context, targetKey encPubkey) *lookup {
 
 // findnode sends a findnode request to the given node and waits until
 // the node has sent up to k neighbors.
-// 向指定的节点发送查询消息，直到消息被转发给k个邻居
+// 与目标节点交互，发送查询消息，返回查询结果，一组邻居节点
 func (t *UDPv4) findnode(toid enode.ID, toaddr *net.UDPAddr, target v4wire.Pubkey) ([]*node, error) {
 	t.ensureBond(toid, toaddr)
 
@@ -326,19 +344,27 @@ func (t *UDPv4) findnode(toid enode.ID, toaddr *net.UDPAddr, target v4wire.Pubke
 	// active until enough nodes have been received.
 	nodes := make([]*node, 0, bucketSize)
 	nreceived := 0
-	rm := t.pending(toid, toaddr.IP, v4wire.NeighborsPacket, func(r v4wire.Packet) (matched bool, requestDone bool) {
-		reply := r.(*v4wire.Neighbors)
-		for _, rn := range reply.Nodes {
-			nreceived++
-			n, err := t.nodeFromRPC(toaddr, rn)
-			if err != nil {
-				t.log.Trace("Invalid neighbor node received", "ip", rn.IP, "addr", toaddr, "err", err)
-				continue
+
+	//查询邻居应答包处理逻辑，先定义应答匹配器，通过toid关联请求，然后把应答器放入等待应答队列
+	rm := t.pending(toid, toaddr.IP, v4wire.NeighborsPacket,
+		func(r v4wire.Packet) (matched bool, requestDone bool) {
+			//应答处理逻辑：先验证邻居的IP端口有效，然后放入结果列表
+			reply := r.(*v4wire.Neighbors)
+			for _, rn := range reply.Nodes {
+				//邻居节点计数器
+				nreceived++
+				//对收到的节点Ip端口验证是否有效，非rpc连接测试
+				n, err := t.nodeFromRPC(toaddr, rn)
+				if err != nil {
+					t.log.Trace("Invalid neighbor node received", "ip", rn.IP, "addr", toaddr, "err", err)
+					continue
+				}
+				nodes = append(nodes, n)
 			}
-			nodes = append(nodes, n)
-		}
-		return true, nreceived >= bucketSize
-	})
+			return true, nreceived >= bucketSize
+		})
+
+	//发送查询邻近节点请求
 	t.send(toaddr, toid, &v4wire.Findnode{
 		Target:     target,
 		Expiration: uint64(time.Now().Add(expiration).Unix()),
@@ -399,8 +425,10 @@ func (t *UDPv4) RequestENR(n *enode.Node) (*enode.Node, error) {
 
 // pending adds a reply matcher to the pending reply queue.
 // see the documentation of type replyMatcher for a detailed explanation.
+// 添加1个应答匹配器到等待应答队列，指定目标节点id、ip、匹配器回调函数
 func (t *UDPv4) pending(id enode.ID, ip net.IP, ptype byte, callback replyMatchFunc) *replyMatcher {
 	ch := make(chan error, 1)
+	//构建应答器
 	p := &replyMatcher{from: id, ip: ip, ptype: ptype, callback: callback, errc: ch}
 	select {
 	case t.addReplyMatcher <- p:

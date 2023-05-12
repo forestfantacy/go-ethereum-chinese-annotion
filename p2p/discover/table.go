@@ -83,11 +83,12 @@ type Table struct {
 	db  *enode.DB // database of known nodes
 	//传输层协议
 	net transport
-	//各种信号量
+	//刷新请求管道：管道里的元素是刷新请求，而请求本身也是管道
 	refreshReq chan chan struct{}
-	initDone   chan struct{}
-	closeReq   chan struct{}
-	closed     chan struct{}
+	//初始化结束
+	initDone chan struct{}
+	closeReq chan struct{}
+	closed   chan struct{}
 
 	nodeAddedHook func(*node) // for testing
 }
@@ -143,12 +144,12 @@ func newTable(t transport, db *enode.DB, bootnodes []*enode.Node, log log.Logger
 	return tab, nil
 }
 
-//返回当前节点
+// 返回当前节点
 func (tab *Table) self() *enode.Node {
 	return tab.net.Self()
 }
 
-//初始化节点表的随机数源
+// 初始化节点表的随机数源
 func (tab *Table) seedRand() {
 	var b [8]byte
 	crand.Read(b[:])
@@ -160,7 +161,7 @@ func (tab *Table) seedRand() {
 
 // ReadRandomNodes fills the given slice with random nodes from the table. The results
 // are guaranteed to be unique for a single invocation, no node will appear twice.
-//获取当前节点表中所有的节点，打乱原顺序，放入列表
+// 获取当前节点表中所有的节点，打乱原顺序，放入列表
 func (tab *Table) ReadRandomNodes(buf []*enode.Node) (n int) {
 	if !tab.isInitDone() {
 		return 0
@@ -220,6 +221,7 @@ func (tab *Table) setFallbackNodes(nodes []*enode.Node) error {
 }
 
 // isInitDone returns whether the table's initial seeding procedure has completed.
+// 节点表初始化加载种子节点是否结束
 func (tab *Table) isInitDone() bool {
 	select {
 	case <-tab.initDone:
@@ -229,9 +231,11 @@ func (tab *Table) isInitDone() bool {
 	}
 }
 
+// 发送重新刷新请求
 func (tab *Table) refresh() <-chan struct{} {
 	done := make(chan struct{})
 	select {
+	//给refreshReq发信号，触发refresh
 	case tab.refreshReq <- done:
 	case <-tab.closeReq:
 		close(done)
@@ -243,49 +247,67 @@ func (tab *Table) refresh() <-chan struct{} {
 // 节点表的定时任务：保持节点表的最新状态
 func (tab *Table) loop() {
 	var (
-		revalidate     = time.NewTimer(tab.nextRevalidateTime())
-		refresh        = time.NewTicker(refreshInterval)
-		copyNodes      = time.NewTicker(copyNodesInterval)
-		refreshDone    = make(chan struct{})           // where doRefresh reports completion
-		revalidateDone chan struct{}                   // where doRevalidate reports completion
-		waiting        = []chan struct{}{tab.initDone} // holds waiting callers while doRefresh runs
+		//定时重新验证
+		revalidate = time.NewTimer(tab.nextRevalidateTime())
+		//定时重新刷新
+		refresh = time.NewTicker(refreshInterval)
+		//定时拷贝
+		copyNodes = time.NewTicker(copyNodesInterval)
+		//重新刷新结束
+		refreshDone = make(chan struct{}) // where doRefresh reports completion
+		//重新验证结束
+		revalidateDone chan struct{} // where doRevalidate reports completion
+		//正在刷新过程中的等待列表
+		waiting = []chan struct{}{tab.initDone} // holds waiting callers while doRefresh runs
 	)
+
 	defer refresh.Stop()
 	defer revalidate.Stop()
 	defer copyNodes.Stop()
 
 	// Start initial refresh.
-	//启动刷新
+	//启动第1次刷新
 	go tab.doRefresh(refreshDone)
 
-loop: //定时刷新
+loop: //定时刷新节点表，每个case是一个阶段，从上往下顺序执行，由多个管道信号量控制顺序
 	for {
 		select {
-		case <-refresh.C: //刷新节点表
+		//定时触发，先改变随机数源，启动重新刷新
+		case <-refresh.C:
 			tab.seedRand()
 			if refreshDone == nil {
 				refreshDone = make(chan struct{})
 				go tab.doRefresh(refreshDone)
 			}
-		case req := <-tab.refreshReq: //根据刷新请求排队执行刷新
+
+		// 收到新的刷新请求
+		case req := <-tab.refreshReq:
+			//先放入等待结束列表
 			waiting = append(waiting, req)
 			if refreshDone == nil {
 				refreshDone = make(chan struct{})
 				go tab.doRefresh(refreshDone)
 			}
-		case <-refreshDone: //刷新完毕后回收资源
+		//刷新完毕后，清理等待结束列表中的刷新请求
+		case <-refreshDone:
 			for _, ch := range waiting {
 				close(ch)
 			}
 			waiting, refreshDone = nil, nil
-		case <-revalidate.C: //重新选举
+
+		//重新选举
+		case <-revalidate.C:
 			revalidateDone = make(chan struct{})
 			go tab.doRevalidate(revalidateDone)
-		case <-revalidateDone: //重新选举结束
+		//重新选举结束
+		case <-revalidateDone:
 			revalidate.Reset(tab.nextRevalidateTime())
 			revalidateDone = nil
+
+		// 定时拷贝存活节点
 		case <-copyNodes.C:
-			go tab.copyLiveNodes() //拷贝存活节点
+			go tab.copyLiveNodes()
+
 		case <-tab.closeReq:
 			break loop
 		}
@@ -314,7 +336,7 @@ func (tab *Table) doRefresh(done chan struct{}) {
 	// them. This should yield a few previously seen nodes that are
 	// (hopefully) still alive.
 
-	//加载种子节点：数据库 & 配置
+	//从数据库和配置加载种子节点到节点表k桶
 	tab.loadSeedNodes()
 
 	// Run self lookup to discover new neighbor nodes.
@@ -436,7 +458,7 @@ func (tab *Table) copyLiveNodes() {
 // preferLive is true and the table contains any verified nodes, the result will not
 // contain unverified nodes. However, if there are no verified nodes at all, the result
 // will contain unverified nodes.
-// 根据id查询最近节点
+// 根据id查询最近节点，preferLive为true表示只要验证过的节点
 func (tab *Table) findnodeByID(target enode.ID, nresults int, preferLive bool) *nodesByDistance {
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
@@ -446,6 +468,8 @@ func (tab *Table) findnodeByID(target enode.ID, nresults int, preferLive bool) *
 	// is O(tab.len() * nresults).
 	nodes := &nodesByDistance{target: target}
 	liveNodes := &nodesByDistance{target: target}
+
+	//遍历节点表
 	for _, b := range &tab.buckets {
 		for _, n := range b.entries {
 			nodes.push(n, nresults)
@@ -729,6 +753,7 @@ type nodesByDistance struct {
 }
 
 // push adds the given node to the list, keeping the total size below maxElems.
+// 往节点列表中添加节点，控制列表总大小不超过上限
 func (h *nodesByDistance) push(n *node, maxElems int) {
 	ix := sort.Search(len(h.entries), func(i int) bool {
 		return enode.DistCmp(h.target, h.entries[i].ID(), n.ID()) > 0

@@ -47,24 +47,30 @@ const (
 // 本地节点记录
 type LocalNode struct {
 	cur atomic.Value // holds a non-nil node pointer while the record is up-to-date
-
 	id  ID
+	//私钥
 	key *ecdsa.PrivateKey
-	db  *DB
-
+	//文件数据库
+	db *DB
 	// everything below is protected by a lock
-	mu        sync.RWMutex
-	seq       uint64
-	update    time.Time // timestamp when the record was last updated
-	entries   map[string]enr.Entry
+	mu sync.RWMutex
+	//序号
+	seq uint64
+	//最后更新时间戳
+	update time.Time // timestamp when the record was last updated
+	//签名的节点记录容器
+	entries map[string]enr.Entry
+	//ipv4 ip端口
 	endpoint4 lnEndpoint
+	//ipv6 ip端口
 	endpoint6 lnEndpoint
 }
 
+// 本地节点端点
 type lnEndpoint struct {
 	track                *netutil.IPTracker
 	staticIP, fallbackIP net.IP
-	fallbackUDP          uint16 // port
+	fallbackUDP          uint16 // port 端口
 }
 
 // NewLocalNode creates a local node.
@@ -226,19 +232,23 @@ func (ln *LocalNode) UDPEndpointStatement(fromaddr, endpoint *net.UDPAddr) {
 
 // UDPContact should be called whenever the local node has announced itself to another node
 // via UDP. It feeds the local endpoint predictor.
+// 记录通讯历史
 func (ln *LocalNode) UDPContact(toaddr *net.UDPAddr) {
 	ln.mu.Lock()
 	defer ln.mu.Unlock()
 
+	//记录目标ip端口
 	ln.endpointForIP(toaddr.IP).track.AddContact(toaddr.String())
 	ln.updateEndpoints()
 }
 
 // updateEndpoints updates the record with predicted endpoints.
+// 把端点的ip 端口存到LocalNode的内存里
 func (ln *LocalNode) updateEndpoints() {
 	ip4, udp4 := ln.endpoint4.get()
 	ip6, udp6 := ln.endpoint6.get()
 
+	//IP
 	if ip4 != nil && !ip4.IsUnspecified() {
 		ln.set(enr.IPv4(ip4))
 	} else {
@@ -249,6 +259,7 @@ func (ln *LocalNode) updateEndpoints() {
 	} else {
 		ln.delete(enr.IPv6{})
 	}
+	//端口
 	if udp4 != 0 {
 		ln.set(enr.UDP(udp4))
 	} else {
