@@ -59,8 +59,9 @@ const (
 // protoHandshake is the RLP structure of the protocol handshake.
 // 协议握手的数据结构
 type protoHandshake struct {
-	Version    uint64
-	Name       string
+	Version uint64
+	Name    string
+	//子协议列表
 	Caps       []Cap
 	ListenPort uint64
 	ID         []byte // secp256k1 public key

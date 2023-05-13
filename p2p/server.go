@@ -184,21 +184,28 @@ type Server struct {
 	peerFeed     event.Feed
 	log          log.Logger
 
-	//本地数据库
-	nodedb    *enode.DB
+	//服务发现相关
+	//本地数据库，持久化最近活跃节点
+	nodedb *enode.DB
+	//本地节点
 	localnode *enode.LocalNode
-	ntab      *discover.UDPv4
-	DiscV5    *discover.UDPv5
-	discmix   *enode.FairMix
+	//v4协议
+	ntab *discover.UDPv4
+	//v5
+	DiscV5  *discover.UDPv5
+	discmix *enode.FairMix
+	//拨号定时器
 	dialsched *dialScheduler
 
 	// Channels into the run loop.
 	quit          chan struct{}
 	addtrusted    chan *enode.Node
 	removetrusted chan *enode.Node
-	peerOp        chan peerOpFunc
-	peerOpDone    chan struct{}
-	delpeer       chan peerDrop
+	//对所有已连接的远端节点的业务逻辑（函数）由此信号量管理。（server内部有个局部容器，动态维护着所有已连接的远端节点，）
+	peerOp chan peerOpFunc
+	//对节点组的业务执行结束的信号量
+	peerOpDone chan struct{}
+	delpeer    chan peerDrop
 	//rplx 握手完成
 	checkpointPostHandshake chan *conn
 	//协议握手完成
@@ -233,10 +240,12 @@ type conn struct {
 	node      *enode.Node //对端节点
 	flags     connFlag    //连接类型 动态拨号、静态拨号、拨入连接、信任连接
 	cont      chan error  // The run loop uses cont to signal errors to SetupConn.
-	caps      []Cap       // valid after the protocol handshake
-	name      string      // valid after the protocol handshake
+	//子协议列表
+	caps []Cap  // valid after the protocol handshake
+	name string // valid after the protocol handshake
 }
 
+// TCP传输层接口：定义两次握手、读写消息
 type transport interface {
 	// The two handshakes.
 	doEncHandshake(prv *ecdsa.PrivateKey) (*ecdsa.PublicKey, error)
@@ -260,6 +269,7 @@ func (c *conn) String() string {
 	return s
 }
 
+// 连接类型
 func (f connFlag) String() string {
 	s := ""
 	if f&trustedConn != 0 {
@@ -442,7 +452,7 @@ func (s *sharedUDPConn) Close() error {
 
 // Start starts running the server.
 // Servers can not be re-used after stopping.
-//启动主流程
+// 启动主流程
 func (srv *Server) Start() (err error) {
 	//启动全过程加锁
 	srv.lock.Lock()
@@ -572,7 +582,7 @@ func (srv *Server) setupLocalNode() error {
 	return nil
 }
 
-// 启动节点发现
+// 启动节点发现v4 v5
 func (srv *Server) setupDiscovery() error {
 	srv.discmix = enode.NewFairMix(discmixTimeout)
 
@@ -594,13 +604,13 @@ func (srv *Server) setupDiscovery() error {
 
 	//udp协议与tcp使用相同ip
 	listenAddr := srv.ListenAddr
-
+	//自定义地址
 	// Use an alternate listening address for UDP if
 	// a custom discovery address is configured.
 	if srv.DiscAddr != "" {
 		listenAddr = srv.DiscAddr
 	}
-
+	//地址校验
 	addr, err := net.ResolveUDPAddr("udp", listenAddr)
 	if err != nil {
 		return err
@@ -645,12 +655,14 @@ func (srv *Server) setupDiscovery() error {
 			Unhandled:   unhandled,
 			Log:         srv.log,
 		}
-		//开启v4协议，返回UDPv4 ntab
+
+		//基于udp conn，启动v4协议，
 		ntab, err := discover.ListenV4(conn, srv.localnode, cfg)
 		if err != nil {
 			return err
 		}
 		srv.ntab = ntab
+		//查找随机节点的邻居节点
 		srv.discmix.AddSource(ntab.RandomNodes())
 	}
 
@@ -676,7 +688,7 @@ func (srv *Server) setupDiscovery() error {
 	return nil
 }
 
-// 启动连接定时器
+// 启动拨号定时器
 func (srv *Server) setupDialScheduler() {
 	//定时器配置
 	config := dialConfig{
@@ -762,10 +774,11 @@ func (srv *Server) setupListening() error {
 }
 
 // doPeerOp runs fn on the main loop.
+// 在主循环中运行fn
 func (srv *Server) doPeerOp(fn peerOpFunc) {
 	select {
-	case srv.peerOp <- fn: //peerOp管道可写
-		<-srv.peerOpDone //?
+	case srv.peerOp <- fn: //交给peerOp即可执行
+		<-srv.peerOpDone //同步等待结果，peerOpDone可读，表示fn执行完毕
 	case <-srv.quit:
 	}
 }
@@ -855,7 +868,7 @@ running:
 			}
 			c.cont <- err
 
-		case pd := <-srv.delpeer: //节点断连
+		case pd := <-srv.delpeer: //节点删除
 			// A peer disconnected.
 			d := common.PrettyDuration(mclock.Now() - pd.created)
 			delete(peers, pd.ID()) //从已连接节点移除

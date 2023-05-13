@@ -113,6 +113,7 @@ type replyMatcher struct {
 	// reply was acceptable. The second return value indicates whether the callback should
 	// be removed from the pending reply queue. If it returns false, the reply is considered
 	// incomplete and the callback will be invoked again for the next matching reply.
+	//匹配器回调函数
 	callback replyMatchFunc
 
 	// errc receives nil when the callback indicates completion or an
@@ -141,6 +142,7 @@ type reply struct {
 func ListenV4(c UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv4, error) {
 	cfg = cfg.withDefaults()
 	closeCtx, cancel := context.WithCancel(context.Background())
+
 	//构建
 	t := &UDPv4{
 		conn:            newMeteredConn(c),
@@ -154,6 +156,7 @@ func ListenV4(c UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv4, error) {
 		cancelCloseCtx:  cancel,
 		log:             cfg.Log,
 	}
+
 	//构建节点表，来自之前持久化到db的和配置的初始节点
 	tab, err := newTable(t, ln.Database(), cfg.Bootnodes, t.log)
 	if err != nil {
@@ -161,15 +164,15 @@ func ListenV4(c UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv4, error) {
 	}
 	t.tab = tab
 
-	//节点表的定时任务：保持节点表的最新状态
+	//启动节点表主循环，节点表核心职能:通过定时刷新、淘汰，保持内部状态最新，及时发现新节点，剔除离线节点
 	go tab.loop()
 
 	t.wg.Add(2)
 
-	//刷新定时任务
+	//消息应答器循环：维护应答匹配器列表，如果有新的应答包被传进来，t.readLoop负责读取，按协议分发并处理，处理过程需要匹配应答器
 	go t.loop()
 
-	//读取并处理udp连接的入站数据包
+	//发现协议读取入站消息
 	go t.readLoop(cfg.Unhandled)
 	return t, nil
 }
@@ -441,6 +444,7 @@ func (t *UDPv4) pending(id enode.ID, ip net.IP, ptype byte, callback replyMatchF
 
 // handleReply dispatches a reply packet, invoking reply matchers. It returns
 // whether any matcher considered the packet acceptable.
+// 处理应答包：构建应答，然后去找匹配器
 func (t *UDPv4) handleReply(from enode.ID, fromIP net.IP, req v4wire.Packet) bool {
 	matched := make(chan bool, 1)
 	select {
@@ -454,7 +458,7 @@ func (t *UDPv4) handleReply(from enode.ID, fromIP net.IP, req v4wire.Packet) boo
 
 // loop runs in its own goroutine. it keeps track of
 // the refresh timer and the pending reply queue.
-// 刷新replyMatcher定时任务，replyMatcher是啥
+// 维护应答匹配器列表，如果有新的应答包被传进来，交给匹配的应答器处理，即请求响应的连接
 func (t *UDPv4) loop() {
 	defer t.wg.Done()
 
@@ -501,14 +505,16 @@ func (t *UDPv4) loop() {
 			}
 			return
 
-		case p := <-t.addReplyMatcher: //把replyMatcher添加到列表
+		case p := <-t.addReplyMatcher: //发送请求时写入addReplyMatcher
 			p.deadline = time.Now().Add(respTimeout)
 			plist.PushBack(p)
 
-		case r := <-t.gotreply: //查询匹配replyMatcher
+		case r := <-t.gotreply: //新的应答包可读
 			var matched bool // whether any replyMatcher considered the reply acceptable.
 			for el := plist.Front(); el != nil; el = el.Next() {
+				//遍历应答器
 				p := el.Value.(*replyMatcher)
+				//匹配源端、目标端、类型
 				if p.from == r.from && p.ptype == r.data.Kind() && p.ip.Equal(r.ip) {
 					ok, requestDone := p.callback(r.data)
 					matched = matched || ok
@@ -574,6 +580,7 @@ func (t *UDPv4) readLoop(unhandled chan<- ReadPacket) {
 
 	buf := make([]byte, maxPacketSize)
 	for {
+		//从网络中读取
 		nbytes, from, err := t.conn.ReadFromUDP(buf)
 		if netutil.IsTemporaryError(err) {
 			// Ignore temporary read errors.
@@ -589,7 +596,7 @@ func (t *UDPv4) readLoop(unhandled chan<- ReadPacket) {
 			return
 		}
 
-		//处理数据包
+		//处理入口
 		if t.handlePacket(from, buf[:nbytes]) != nil && unhandled != nil {
 			select {
 			//重新构建1个只读数据包交给未处理管道
