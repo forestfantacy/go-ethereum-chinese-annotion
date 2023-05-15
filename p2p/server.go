@@ -514,7 +514,7 @@ func (srv *Server) Start() (err error) {
 		return err
 	}
 
-	//启动连接定时器
+	//启动拨号定时器
 	srv.setupDialScheduler()
 
 	srv.loopWG.Add(1)
@@ -734,7 +734,7 @@ func (srv *Server) maxDialedConns() (limit int) {
 }
 
 /*
-打开本地监控端口
+打开TCP监听端口
 解决NAT tcp端口映射
 处理网络请求，核心逻辑
 
@@ -1121,7 +1121,7 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 	//握手成功，完善c的信息
 	c.caps, c.name = phs.Caps, phs.Name
 
-	//把c写入checkpointAddPeer，run方法负责把c封装成peer并添加到已连接节点列表
+	//把c写入checkpointAddPeer，run方法550行 负责读取，把c封装成peer并添加到已连接节点列表
 	err = srv.checkpoint(c, srv.checkpointAddPeer)
 	if err != nil {
 		clog.Trace("Rejected peer", "err", err)

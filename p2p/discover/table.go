@@ -96,9 +96,12 @@ type Table struct {
 // transport is implemented by the UDP transports.
 // UDP传输层业务，v4 v5 两种实现
 type transport interface {
+	//本端节点
 	Self() *enode.Node
 	RequestENR(*enode.Node) (*enode.Node, error)
+	//查找随机节点的邻居
 	lookupRandom() []*enode.Node
+	//查找本端的邻居
 	lookupSelf() []*enode.Node
 	ping(*enode.Node) (seq uint64, err error)
 }
@@ -109,7 +112,7 @@ type transport interface {
 type bucket struct {
 	//在线节点，按活跃时间排序
 	entries []*node // live entries, sorted by time of last contact
-	//替补？
+	//候补节点列表
 	replacements []*node // recently seen nodes to be used if revalidation fails
 	ips          netutil.DistinctNetSet
 }
@@ -295,11 +298,11 @@ loop: //定时刷新节点表，每个case是一个阶段，从上往下顺序�
 			}
 			waiting, refreshDone = nil, nil
 
-		//重新选举
+		//重新验证随机k桶中最后1个节点
 		case <-revalidate.C:
 			revalidateDone = make(chan struct{})
 			go tab.doRevalidate(revalidateDone)
-		//重新选举结束
+		//重新验证结束
 		case <-revalidateDone:
 			revalidate.Reset(tab.nextRevalidateTime())
 			revalidateDone = nil
@@ -340,7 +343,7 @@ func (tab *Table) doRefresh(done chan struct{}) {
 	tab.loadSeedNodes()
 
 	// Run self lookup to discover new neighbor nodes.
-	//发现邻居节点
+	//查找自己的邻居节点
 	tab.net.lookupSelf()
 
 	// The Kademlia paper specifies that the bucket refresh should
@@ -349,6 +352,8 @@ func (tab *Table) doRefresh(done chan struct{}) {
 	// (not hash-sized) and it is not easily possible to generate a
 	// sha3 preimage that falls into a chosen bucket.
 	// We perform a few lookups with a random target instead.
+
+	//执行3次随机查找节点
 	for i := 0; i < 3; i++ {
 		tab.net.lookupRandom()
 	}

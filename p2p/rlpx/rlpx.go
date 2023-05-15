@@ -573,7 +573,7 @@ func (h *handshakeState) staticSharedSecret(prv *ecdsa.PrivateKey) ([]byte, erro
 func (h *handshakeState) runInitiator(conn io.ReadWriter, prv *ecdsa.PrivateKey, remote *ecdsa.PublicKey) (s Secrets, err error) {
 	h.initiator = true
 	h.remote = ecies.ImportECDSAPublic(remote)
-	//基于私钥构建认证消息：随机数 & 签名 & 公钥
+	//基于私钥构建认证消息：随机数 & 签名 & 本端公钥
 	authMsg, err := h.makeAuthMsg(prv)
 	if err != nil {
 		return s, err

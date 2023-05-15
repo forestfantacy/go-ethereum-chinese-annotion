@@ -325,9 +325,9 @@ func (t *UDPv4) newRandomLookup(ctx context.Context) *lookup {
 
 // 构建新的查找结构体
 func (t *UDPv4) newLookup(ctx context.Context, targetKey encPubkey) *lookup {
-	//根据随机数创建节点id
+	//根据目标公钥创建节点id
 	target := enode.ID(crypto.Keccak256Hash(targetKey[:]))
-	//根据随机数创建公钥
+	//根据随机数创建远端公钥
 	ekey := v4wire.Pubkey(targetKey)
 	//构建新的查找
 	it := newLookup(ctx, t.tab, target, func(n *node) ([]*node, error) {
@@ -463,6 +463,7 @@ func (t *UDPv4) loop() {
 	defer t.wg.Done()
 
 	var (
+		//应答匹配器列表
 		plist        = list.New()
 		timeout      = time.NewTimer(0)
 		nextTimeout  *replyMatcher // head of plist when timeout was last reset
@@ -506,7 +507,9 @@ func (t *UDPv4) loop() {
 			return
 
 		case p := <-t.addReplyMatcher: //发送请求时写入addReplyMatcher
+			//计算超时时间
 			p.deadline = time.Now().Add(respTimeout)
+			//写入列表
 			plist.PushBack(p)
 
 		case r := <-t.gotreply: //新的应答包可读
