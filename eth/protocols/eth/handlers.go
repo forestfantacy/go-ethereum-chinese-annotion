@@ -144,6 +144,7 @@ func serviceContiguousBlockHeaderQuery(chain *core.BlockChain, query *GetBlockHe
 	if count > maxHeadersServe {
 		count = maxHeadersServe
 	}
+	//数字模式：给定区块高度，往回找n个区块头
 	if query.Origin.Hash == (common.Hash{}) {
 		// Number mode, just return the canon chain segment. The backend
 		// delivers in [N, N-1, N-2..] descending order, so we need to
@@ -160,7 +161,9 @@ func serviceContiguousBlockHeaderQuery(chain *core.BlockChain, query *GetBlockHe
 		}
 		return headers
 	}
+
 	// Hash mode.
+	//哈希模式：给定区块哈希，往回找n个区块头
 	var (
 		headers []rlp.RawValue
 		hash    = query.Origin.Hash
@@ -189,6 +192,8 @@ func serviceContiguousBlockHeaderQuery(chain *core.BlockChain, query *GetBlockHe
 		headers = append(headers, descendants...)
 		return headers
 	}
+
+	//父区块递归查找模式：根据区块的父区块哈希，递归查找到整个区块链
 	{ // Last mode: deliver ancestors of H
 		for i := uint64(1); header != nil && i < count; i++ {
 			header = chain.GetHeaderByHash(header.ParentHash)
@@ -225,6 +230,7 @@ func ServiceGetBlockBodiesQuery(chain *core.BlockChain, query GetBlockBodiesPack
 			lookups >= 2*maxBodiesServe {
 			break
 		}
+		//根据区块hash从db中读取区块体
 		if data := chain.GetBodyRLP(hash); len(data) != 0 {
 			bodies = append(bodies, data)
 			bytes += len(data)

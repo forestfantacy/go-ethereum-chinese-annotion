@@ -621,6 +621,7 @@ func (t *UDPv4) handlePacket(from *net.UDPAddr, buf []byte) error {
 
 	//根据包类型封装对应业务的处理函数
 	packet := t.wrapPacket(rawpacket)
+
 	fromID := fromKey.ID()
 	if err == nil && packet.preverify != nil {
 		err = packet.preverify(packet, from, fromID, fromKey)

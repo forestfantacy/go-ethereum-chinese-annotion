@@ -114,6 +114,7 @@ type txRequest struct {
 
 // txDelivery is the notification that a batch of transactions have been added
 // to the pool and should be untracked.
+// 代表已添加到交易池的一批交易
 type txDelivery struct {
 	origin string        // Identifier of the peer originating the notification
 	hashes []common.Hash // Batch of transaction hashes having been delivered
@@ -142,7 +143,14 @@ type txDrop struct {
 //   - Each peer that announced transactions may be scheduled retrievals, but
 //     only ever one concurrently. This ensures we can immediately know what is
 //     missing from a reply and reschedule it.
+//
+// 3个阶段：
+// 1.将新发现的交易放入等待队列
+// 2.500ms之后，将等待中的交易放入queueing
+// 3.当peer空闲，没有正在执行的查询请求时，将queueing的交易分配给peer执行抓取
 type TxFetcher struct {
+
+	//信号量
 	notify  chan *txAnnounce
 	cleanup chan *txDelivery
 	drop    chan *txDrop
@@ -152,26 +160,38 @@ type TxFetcher struct {
 
 	// Stage 1: Waiting lists for newly discovered transactions that might be
 	// broadcast without needing explicit request/reply round trips.
-	waitlist  map[common.Hash]map[string]struct{} // Transactions waiting for an potential broadcast
-	waittime  map[common.Hash]mclock.AbsTime      // Timestamps when transactions were added to the waitlist
+	//[交易hash][Peer]struct{} 等待广播的交易集合
+	waitlist map[common.Hash]map[string]struct{} // Transactions waiting for an potential broadcast
+	//[交易hash]时间戳 每个交易等待的时间戳
+	waittime map[common.Hash]mclock.AbsTime // Timestamps when transactions were added to the waitlist
+	//[Peer][交易hash]struct{} 按peer分组交易列表，存的是等待处理中的交易
 	waitslots map[string]map[common.Hash]struct{} // Waiting announcements grouped by peer (DoS protection)
 
 	// Stage 2: Queue of transactions that waiting to be allocated to some peer
 	// to be retrieved directly.
+	//[Peer][交易hash]struct{} 一个peer的交易列表，下载时按peer查询要下载的交易
 	announces map[string]map[common.Hash]struct{} // Set of announced transactions, grouped by origin peer
+	//[交易hash][Peer] 一个交易的Peer下载源列表
+	//[交易hash][Peer]struct{} 一个交易=》下载peers
 	announced map[common.Hash]map[string]struct{} // Set of download locations, grouped by transaction hash
 
 	// Stage 3: Set of transactions currently being retrieved, some which may be
 	// fulfilled and some rescheduled. Note, this step shares 'announces' from the
 	// previous stage to avoid having to duplicate (need it for DoS checks).
-	fetching   map[common.Hash]string              // Transaction set currently being retrieved
-	requests   map[string]*txRequest               // In-flight transaction retrievals
+	//[交易hash][Peer] 正在抓取的交易集合
+	fetching map[common.Hash]string // Transaction set currently being retrieved
+	//Peer -> txRequest 正在查询交易的请求
+	requests map[string]*txRequest // In-flight transaction retrievals
+	//交易备用源 map[交易hash][Peer]
 	alternates map[common.Hash]map[string]struct{} // In-flight transaction alternate origins if retrieval fails
 
 	// Callbacks
-	hasTx    func(common.Hash) bool             // Retrieves a tx from the local txpool
-	addTxs   func([]*types.Transaction) []error // Insert a batch of transactions into local txpool
-	fetchTxs func(string, []common.Hash) error  // Retrieves a set of txs from a remote peer
+	//从交易池中查询交易
+	hasTx func(common.Hash) bool // Retrieves a tx from the local txpool
+	//添加到交易池的函数
+	addTxs func([]*types.Transaction) []error // Insert a batch of transactions into local txpool
+	//从远端查询一组事务的函数
+	fetchTxs func(string, []common.Hash) error // Retrieves a set of txs from a remote peer
 
 	step  chan struct{} // Notification channel when the fetcher loop iterates
 	clock mclock.Clock  // Time wrapper to simulate in tests
@@ -213,6 +233,7 @@ func NewTxFetcherForTests(
 
 // Notify announces the fetcher of the potential availability of a new batch of
 // transactions in the network.
+// 从一组hash中找出本端缺失的交易，包装成txAnnounce交给通知信号量
 func (f *TxFetcher) Notify(peer string, hashes []common.Hash) error {
 	// Keep track of all the announced transactions
 	txAnnounceInMeter.Mark(int64(len(hashes)))
@@ -226,16 +247,18 @@ func (f *TxFetcher) Notify(peer string, hashes []common.Hash) error {
 		unknowns               = make([]common.Hash, 0, len(hashes))
 		duplicate, underpriced int64
 	)
+
+	//遍历并分组
 	for _, hash := range hashes {
 		switch {
-		case f.hasTx(hash):
+		case f.hasTx(hash): //交易已存在
 			duplicate++
 
-		case f.underpriced.Contains(hash):
+		case f.underpriced.Contains(hash): //交易价格过低
 			underpriced++
 
 		default:
-			unknowns = append(unknowns, hash)
+			unknowns = append(unknowns, hash) //缺失的交易
 		}
 	}
 	txAnnounceKnownMeter.Mark(duplicate)
@@ -245,11 +268,14 @@ func (f *TxFetcher) Notify(peer string, hashes []common.Hash) error {
 	if len(unknowns) == 0 {
 		return nil
 	}
+
+	//从peer发过来的一组缺失的交易
 	announce := &txAnnounce{
 		origin: peer,
 		hashes: unknowns,
 	}
 	select {
+	//广播
 	case f.notify <- announce:
 		return nil
 	case <-f.quit:
@@ -261,6 +287,7 @@ func (f *TxFetcher) Notify(peer string, hashes []common.Hash) error {
 // and the fetcher. This method may be called by both transaction broadcasts and
 // direct request replies. The differentiation is important so the fetcher can
 // re-schedule missing transactions as soon as possible.
+// 按批放入交易池，并包装成txDelivery交给
 func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) error {
 	var (
 		inMeter          = txReplyInMeter
@@ -283,6 +310,7 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 		added = make([]common.Hash, 0, len(txs))
 	)
 	// proceed in batches
+	//最大128每批
 	for i := 0; i < len(txs); i += 128 {
 		end := i + 128
 		if end > len(txs) {
@@ -294,7 +322,7 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 			otherreject int64
 		)
 		batch := txs[i:end]
-		for j, err := range f.addTxs(batch) {
+		for j, err := range f.addTxs(batch) { //放入交易池
 			// Track the transaction hash if the price is too low for us.
 			// Avoid re-request this transaction when we receive another
 			// announcement.
@@ -302,20 +330,22 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 				for f.underpriced.Cardinality() >= maxTxUnderpricedSetSize {
 					f.underpriced.Pop()
 				}
+				//记录价格过低的交易hash
 				f.underpriced.Add(batch[j].Hash())
 			}
+
 			// Track a few interesting failure types
 			switch {
-			case err == nil: // Noop, but need to handle to not count these
+			case err == nil: // Noop, but need to handle to not count these //正常交易
 
-			case errors.Is(err, txpool.ErrAlreadyKnown):
+			case errors.Is(err, txpool.ErrAlreadyKnown): //交易已存在
 				duplicate++
 
-			case errors.Is(err, txpool.ErrUnderpriced) || errors.Is(err, txpool.ErrReplaceUnderpriced):
+			case errors.Is(err, txpool.ErrUnderpriced) || errors.Is(err, txpool.ErrReplaceUnderpriced): //价格过低的交易
 				underpriced++
 
 			default:
-				otherreject++
+				otherreject++ //其他拒绝原因
 			}
 			added = append(added, batch[j].Hash())
 		}
@@ -330,6 +360,7 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 		}
 	}
 	select {
+	//后处理
 	case f.cleanup <- &txDelivery{origin: peer, hashes: added, direct: direct}:
 		return nil
 	case <-f.quit:
@@ -375,7 +406,9 @@ func (f *TxFetcher) loop() {
 			// Note, we could but do not filter already known transactions here as
 			// the probability of something arriving between this call and the pre-
 			// filter outside is essentially zero.
+			//已经用的 = 源端的等待槽队列 + 源端的交易哈希槽队列
 			used := len(f.waitslots[ann.origin]) + len(f.announces[ann.origin])
+			//超过最大阀值，认为是dos攻击
 			if used >= maxTxAnnounces {
 				// This can happen if a set of transactions are requested but not
 				// all fulfilled, so the remainder are rescheduled without the cap
@@ -384,7 +417,9 @@ func (f *TxFetcher) loop() {
 				txAnnounceDOSMeter.Mark(int64(len(ann.hashes)))
 				break
 			}
+			//总共要用的 = 已经用的 + 本次要用的
 			want := used + len(ann.hashes)
+			//超过最大限制4096，丢弃一部分交易
 			if want > maxTxAnnounces {
 				txAnnounceDOSMeter.Mark(int64(want - maxTxAnnounces))
 				ann.hashes = ann.hashes[:want-maxTxAnnounces]
@@ -397,10 +432,12 @@ func (f *TxFetcher) loop() {
 				// If the transaction is already downloading, add it to the list
 				// of possible alternates (in case the current retrieval fails) and
 				// also account it for the peer.
+				//alternates[交易a][peer] 如果存在交易a的备用源，把peer加进去
 				if f.alternates[hash] != nil {
 					f.alternates[hash][ann.origin] = struct{}{}
 
 					// Stage 2 and 3 share the set of origins per tx
+					//初始化或设置peer的交易列表
 					if announces := f.announces[ann.origin]; announces != nil {
 						announces[hash] = struct{}{}
 					} else {
@@ -408,12 +445,15 @@ func (f *TxFetcher) loop() {
 					}
 					continue
 				}
+
 				// If the transaction is not downloading, but is already queued
 				// from a different peer, track it for the new peer too.
+				//announced[交易a][下载源peer] 如果存在交易a的下载源，把peer加进去
 				if f.announced[hash] != nil {
 					f.announced[hash][ann.origin] = struct{}{}
 
 					// Stage 2 and 3 share the set of origins per tx
+					//初始化或设置peer的交易列表
 					if announces := f.announces[ann.origin]; announces != nil {
 						announces[hash] = struct{}{}
 					} else {
@@ -421,12 +461,15 @@ func (f *TxFetcher) loop() {
 					}
 					continue
 				}
+
 				// If the transaction is already known to the fetcher, but not
 				// yet downloading, add the peer as an alternate origin in the
 				// waiting list.
+				//waitlist[交易a][下载源peer] 如果存在交易a的备用下载源，把peer加进去
 				if f.waitlist[hash] != nil {
 					f.waitlist[hash][ann.origin] = struct{}{}
 
+					//初始化或设置peer的等待处理交易列表
 					if waitslots := f.waitslots[ann.origin]; waitslots != nil {
 						waitslots[hash] = struct{}{}
 					} else {
@@ -434,6 +477,7 @@ func (f *TxFetcher) loop() {
 					}
 					continue
 				}
+
 				// Transaction unknown to the fetcher, insert it into the waiting list
 				f.waitlist[hash] = map[string]struct{}{ann.origin: {}}
 				f.waittime[hash] = f.clock.Now()
@@ -450,20 +494,26 @@ func (f *TxFetcher) loop() {
 			}
 			// If this peer is new and announced something already queued, maybe
 			// request transactions from them
+			//发起抓取
 			if !oldPeer && len(f.announces[ann.origin]) > 0 {
 				f.scheduleFetches(timeoutTimer, timeoutTrigger, map[string]struct{}{ann.origin: {}})
 			}
 
+		//当交易到达触发时间，将他们放入查询队列
 		case <-waitTrigger:
 			// At least one transaction's waiting time ran out, push all expired
 			// ones into the retrieval queues
 			actives := make(map[string]struct{})
+
+			//遍历所有交易等待时间
 			for hash, instance := range f.waittime {
+				//到达等待时间
 				if time.Duration(f.clock.Now()-instance)+txGatherSlack > txArriveTimeout {
 					// Transaction expired without propagation, schedule for retrieval
 					if f.announced[hash] != nil {
 						panic("announce tracker already contains waitlist item")
 					}
+					//将等待中交易放入
 					f.announced[hash] = f.waitlist[hash]
 					for peer := range f.waitlist[hash] {
 						if announces := f.announces[peer]; announces != nil {
@@ -486,6 +536,7 @@ func (f *TxFetcher) loop() {
 				f.rescheduleWait(waitTimer, waitTrigger)
 			}
 			// If any peers became active and are idle, request transactions from them
+			//peer有空闲，发起抓取
 			if len(actives) > 0 {
 				f.scheduleFetches(timeoutTimer, timeoutTrigger, actives)
 			}
@@ -495,6 +546,7 @@ func (f *TxFetcher) loop() {
 			// same peer (either overloaded or malicious, useless in both cases). We
 			// could also penalize (Drop), but there's nothing to gain, and if could
 			// possibly further increase the load on it.
+			//清理超时的查询，避免从相同的端点重新请求（超载或者恶意，没必要重试），也可以丢弃，然并卵，不仅没啥用还会进一步增加负载
 			for peer, req := range f.requests {
 				if time.Duration(f.clock.Now()-req.time)+txGatherSlack > txFetchTimeout {
 					txRequestTimeoutMeter.Mark(int64(len(req.hashes)))
@@ -539,6 +591,7 @@ func (f *TxFetcher) loop() {
 		case delivery := <-f.cleanup:
 			// Independent if the delivery was direct or broadcast, remove all
 			// traces of the hash from internal trackers
+			//直接传递或者广播传递
 			for _, hash := range delivery.hashes {
 				if _, ok := f.waitlist[hash]; ok {
 					for peer, txset := range f.waitslots {
@@ -765,6 +818,7 @@ func (f *TxFetcher) rescheduleTimeout(timer *mclock.Timer, trigger chan struct{}
 }
 
 // scheduleFetches starts a batch of retrievals for all available idle peers.
+// 调度查询
 func (f *TxFetcher) scheduleFetches(timer *mclock.Timer, timeout chan struct{}, whitelist map[string]struct{}) {
 	// Gather the set of peers we want to retrieve from (default to all)
 	actives := whitelist
@@ -815,6 +869,7 @@ func (f *TxFetcher) scheduleFetches(timer *mclock.Timer, timeout chan struct{}, 
 			go func(peer string, hashes []common.Hash) {
 				// Try to fetch the transactions, but in case of a request
 				// failure (e.g. peer disconnected), reschedule the hashes.
+				//抓取交易，失败就重新调度
 				if err := f.fetchTxs(peer, hashes); err != nil {
 					txRequestFailMeter.Mark(int64(len(hashes)))
 					f.Drop(peer)

@@ -516,6 +516,7 @@ func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
 	peers := h.peers.peersWithoutBlock(hash)
 
 	// If propagation is requested, send to a subset of the peer
+	//传播场景，发送区块给同步组
 	if propagate {
 		// Calculate the TD of the block (it's not imported yet, so block.Td is not valid)
 		var td *big.Int
@@ -534,6 +535,7 @@ func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
 		return
 	}
 	// Otherwise if the block is indeed in out own chain, announce it
+	//如果区块已经存在于db中，则向所有没有次区块的peer发送区块hash
 	if h.chain.HasBlock(hash, block.NumberU64()) {
 		for _, peer := range peers {
 			peer.AsyncSendNewBlockHash(block)
@@ -557,27 +559,39 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 		annos = make(map[*ethPeer][]common.Hash) // Set peer->hash to announce
 
 	)
+
 	// Broadcast transactions to a batch of peers not knowing about it
+	//把已连接的端点分为两组
 	for _, tx := range txs {
 		peers := h.peers.peersWithoutTransaction(tx.Hash())
+
 		// Send the tx unconditionally to a subset of our peers
+		//只把交易发给txset（已连接的端点中找平方根个子节点）
 		numDirect := int(math.Sqrt(float64(len(peers))))
 		for _, peer := range peers[:numDirect] {
 			txset[peer] = append(txset[peer], tx.Hash())
 		}
+
 		// For the remaining peers, send announcement only
+		//剩余的端点annos，只发交易哈希
 		for _, peer := range peers[numDirect:] {
 			annos[peer] = append(annos[peer], tx.Hash())
 		}
 	}
+
+	//异步发送交易
 	for peer, hashes := range txset {
 		directPeers++
 		directCount += len(hashes)
+		//交给管道异步处理
 		peer.AsyncSendTransactions(hashes)
 	}
+
+	//异步发送交易哈希
 	for peer, hashes := range annos {
 		annoPeers++
 		annoCount += len(hashes)
+		//交给管道异步处理
 		peer.AsyncSendPooledTransactionHashes(hashes)
 	}
 	log.Debug("Transaction broadcast", "txs", len(txs),
@@ -602,6 +616,7 @@ func (h *handler) txBroadcastLoop() {
 	defer h.wg.Done()
 	for {
 		select {
+		//读到新的交易，交给handler官博
 		case event := <-h.txsCh:
 			h.BroadcastTransactions(event.Txs)
 		case <-h.txsSub.Err():

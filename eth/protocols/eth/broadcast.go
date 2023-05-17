@@ -31,6 +31,7 @@ const (
 
 // blockPropagation is a block propagation event, waiting for its turn in the
 // broadcast queue.
+//区块广播结构体，用于队列
 type blockPropagation struct {
 	block *types.Block
 	td    *big.Int
@@ -39,22 +40,25 @@ type blockPropagation struct {
 // broadcastBlocks is a write loop that multiplexes blocks and block announcements
 // to the remote peer. The goal is to have an async writer that does not lock up
 // node internals and at the same time rate limits queued data.
+// 消费者逻辑：从队列中获取区块，并发送给远端
 func (p *Peer) broadcastBlocks() {
 	for {
 		select {
+		//从队列读取区块，向对端发送NewBlockMsg
 		case prop := <-p.queuedBlocks:
 			if err := p.SendNewBlock(prop.block, prop.td); err != nil {
 				return
 			}
 			p.Log().Trace("Propagated block", "number", prop.block.Number(), "hash", prop.block.Hash(), "td", prop.td)
 
+		//从队列读取区块hash，向对端发送NewBlockHashesMsg
 		case block := <-p.queuedBlockAnns:
 			if err := p.SendNewBlockHashes([]common.Hash{block.Hash()}, []uint64{block.NumberU64()}); err != nil {
 				return
 			}
 			p.Log().Trace("Announced block", "number", block.Number(), "hash", block.Hash())
 
-		case <-p.term:
+		case <-p.term: //终止信号
 			return
 		}
 	}
@@ -63,8 +67,10 @@ func (p *Peer) broadcastBlocks() {
 // broadcastTransactions is a write loop that schedules transaction broadcasts
 // to the remote peer. The goal is to have an async writer that does not lock up
 // node internals and at the same time rate limits queued data.
+// 定时广播交易到远端：从p.txBroadcast读取，成批发送TransactionsMsg给peer
 func (p *Peer) broadcastTransactions() {
 	var (
+		//内部队列，生产端来自p.txBroadcast，消费端成批发送TransactionsMsg
 		queue  []common.Hash         // Queue of hashes to broadcast as full transactions
 		done   chan struct{}         // Non-nil if background broadcaster is running
 		fail   = make(chan error, 1) // Channel used to receive network error
@@ -79,6 +85,7 @@ func (p *Peer) broadcastTransactions() {
 				txs         []*types.Transaction
 				size        common.StorageSize
 			)
+			//读取多个交易，且不超过包最大尺寸：从队列中取到hash，根据hash找到交易池的交易
 			for i := 0; i < len(queue) && size < maxTxPacketSize; i++ {
 				if tx := p.txpool.Get(queue[i]); tx != nil {
 					txs = append(txs, tx)
@@ -89,9 +96,11 @@ func (p *Peer) broadcastTransactions() {
 			queue = queue[:copy(queue, queue[hashesCount:])]
 
 			// If there's anything available to transfer, fire up an async writer
+			//发送txs
 			if len(txs) > 0 {
 				done = make(chan struct{})
 				go func() {
+					//TransactionsMsg
 					if err := p.SendTransactions(txs); err != nil {
 						fail <- err
 						return
@@ -101,8 +110,11 @@ func (p *Peer) broadcastTransactions() {
 				}()
 			}
 		}
+
 		// Transfer goroutine may or may not have been started, listen for events
+
 		select {
+		//从p.txBroadcast读取，交给内部队列queue
 		case hashes := <-p.txBroadcast:
 			// If the connection failed, discard all transaction events
 			if failed {
@@ -130,6 +142,7 @@ func (p *Peer) broadcastTransactions() {
 // announceTransactions is a write loop that schedules transaction broadcasts
 // to the remote peer. The goal is to have an async writer that does not lock up
 // node internals and at the same time rate limits queued data.
+// 定时广播交易announce到远端
 func (p *Peer) announceTransactions() {
 	var (
 		queue  []common.Hash         // Queue of hashes to announce as transaction stubs
@@ -148,6 +161,8 @@ func (p *Peer) announceTransactions() {
 				pendingSizes []uint32
 				size         common.StorageSize
 			)
+
+			//读取内部队列，批量打包交易hash
 			for count = 0; count < len(queue) && size < maxTxPacketSize; count++ {
 				if tx := p.txpool.Get(queue[count]); tx != nil {
 					pending = append(pending, queue[count])
@@ -160,6 +175,7 @@ func (p *Peer) announceTransactions() {
 			queue = queue[:copy(queue, queue[count:])]
 
 			// If there's anything available to transfer, fire up an async writer
+			//发送这批交易hash
 			if len(pending) > 0 {
 				done = make(chan struct{})
 				go func() {
@@ -179,8 +195,10 @@ func (p *Peer) announceTransactions() {
 				}()
 			}
 		}
+
 		// Transfer goroutine may or may not have been started, listen for events
 		select {
+		//从p.txAnnounce读取，交给内部队列queue
 		case hashes := <-p.txAnnounce:
 			// If the connection failed, discard all transaction events
 			if failed {

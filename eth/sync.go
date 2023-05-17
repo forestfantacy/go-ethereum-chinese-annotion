@@ -114,7 +114,9 @@ func (cs *chainSyncer) loop() {
 	defer cs.force.Stop()
 
 	for {
+		//获取本次同步的操作
 		if op := cs.nextSyncOp(); op != nil {
+			//开始同步
 			cs.startSync(op)
 		}
 		select {
@@ -227,6 +229,7 @@ func (cs *chainSyncer) modeAndLocalHead() (downloader.SyncMode, *big.Int) {
 // startSync launches doSync in a new goroutine.
 func (cs *chainSyncer) startSync(op *chainSyncOp) {
 	cs.doneCh = make(chan error, 1)
+	//doSync执行完毕，发信号
 	go func() { cs.doneCh <- cs.handler.doSync(op) }()
 }
 

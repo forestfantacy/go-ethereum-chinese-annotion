@@ -236,6 +236,7 @@ loop:
 		slots := d.freeDialSlots()
 		slots -= d.startStaticDials(slots)
 		if slots > 0 {
+			//遍历节点的信号量
 			nodesCh = d.nodesIn
 		} else {
 			nodesCh = nil

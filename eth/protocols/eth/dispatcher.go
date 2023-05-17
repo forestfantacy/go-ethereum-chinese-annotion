@@ -120,6 +120,7 @@ type response struct {
 // The returned Request must either be closed before discarding it, or the reply
 // must be waited for and the Response's Done channel signalled.
 func (p *Peer) dispatchRequest(req *Request) error {
+	//构造请求
 	reqOp := &request{
 		req:  req,
 		fail: make(chan error),
@@ -129,7 +130,7 @@ func (p *Peer) dispatchRequest(req *Request) error {
 	req.Peer = p.id
 
 	select {
-	case p.reqDispatch <- reqOp:
+	case p.reqDispatch <- reqOp: //将req写入管道，dispatcher读取后发送
 		return <-reqOp.fail
 	case <-p.term:
 		return errDisconnected
@@ -139,6 +140,7 @@ func (p *Peer) dispatchRequest(req *Request) error {
 // dispatchRequest fulfils a pending request and delivers it to the requested
 // sink.
 func (p *Peer) dispatchResponse(res *Response, metadata func() interface{}) error {
+	//构建应答
 	resOp := &response{
 		res:  res,
 		fail: make(chan error),
@@ -186,10 +188,12 @@ func (p *Peer) dispatchResponse(res *Response, metadata func() interface{}) erro
 // it to the network and tracks and dispatches the responses back to the original
 // requester.
 func (p *Peer) dispatcher() {
+	//等待远端应答的请求集合
 	pending := make(map[uint64]*Request)
 
 	for {
 		select {
+		//读到新请求并发送
 		case reqOp := <-p.reqDispatch:
 			req := reqOp.req
 			req.Sent = time.Now()
@@ -202,6 +206,7 @@ func (p *Peer) dispatcher() {
 				pending[req.id] = req
 			}
 
+		//取消
 		case cancelOp := <-p.reqCancel:
 			// Retrieve the pending request to cancel and short circuit if it
 			// has already been serviced and is not available anymore
@@ -211,14 +216,17 @@ func (p *Peer) dispatcher() {
 				continue
 			}
 			// Stop tracking the request
+			//只是本端不处理应答，但远端已处理请求
 			delete(pending, cancelOp.id)
 			cancelOp.fail <- nil
 
+		//收到应答
 		case resOp := <-p.resDispatch:
 			res := resOp.res
 			res.Req = pending[res.id]
 
 			// Independent if the request exists or not, track this packet
+			//清理跟请求有关的track，更新统计数据
 			requestTracker.Fulfil(p.id, p.version, res.code, res.id)
 
 			switch {

@@ -56,26 +56,32 @@ func (h *ethHandler) AcceptTxs() bool {
 
 // Handle is invoked from a peer's message handler when it receives a new remote
 // message that the handler couldn't consume and serve itself.
+// 客户端处理逻辑
 func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 	// Consume any broadcasts and announces, forwarding the rest to the downloader
 	switch packet := packet.(type) {
 	case *eth.NewBlockHashesPacket:
 		hashes, numbers := packet.Unpack()
+		//找出本端缺失的区块，启动区块抓取流程
 		return h.handleBlockAnnounces(peer, hashes, numbers)
 
 	case *eth.NewBlockPacket:
+		//区块验证，并导入本地区块链
 		return h.handleBlockBroadcast(peer, packet.Block, packet.TD)
 
 	case *eth.NewPooledTransactionHashesPacket66:
+		//丢弃价格过低或者重复的交易，将缺失的交易交给广播流程
 		return h.txFetcher.Notify(peer.ID(), *packet)
 
 	case *eth.NewPooledTransactionHashesPacket68:
 		return h.txFetcher.Notify(peer.ID(), packet.Hashes)
 
 	case *eth.TransactionsPacket:
+		//按批次放入交易池
 		return h.txFetcher.Enqueue(peer.ID(), *packet, false)
 
 	case *eth.PooledTransactionsPacket:
+		//按批次放入交易池
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
 
 	default:
