@@ -26,6 +26,7 @@ import (
 
 // memoryGasCost calculates the quadratic gas for memory expansion. It does so
 // only for the memory region that is expanded, not the total memory.
+// 计算内存扩展的二次气体。它只适用于扩展的内存区域，而不是整个内存
 func memoryGasCost(mem *Memory, newMemSize uint64) (uint64, error) {
 	if newMemSize == 0 {
 		return 0, nil

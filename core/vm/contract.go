@@ -42,10 +42,12 @@ func (ar AccountRef) Address() common.Address { return (common.Address)(ar) }
 
 // Contract represents an ethereum contract in the state database. It contains
 // the contract code, calling arguments. Contract implements ContractRef
+//代表在状态数据库中的以太坊合约，它包含合约代码、调用参数和合约地址
 type Contract struct {
 	// CallerAddress is the result of the caller which initialised this
 	// contract. However when the "call method" is delegated this value
 	// needs to be initialised to that of the caller's caller.
+	//初始化部署这个合约的地址，如果使用call方法调用，那这个值将变成调用者的调用者
 	CallerAddress common.Address
 	caller        ContractRef
 	self          ContractRef
@@ -53,19 +55,23 @@ type Contract struct {
 	jumpdests map[common.Hash]bitvec // Aggregated result of JUMPDEST analysis.
 	analysis  bitvec                 // Locally cached result of JUMPDEST analysis
 
+	//代码
 	Code     []byte
 	CodeHash common.Hash
+	//合约地址
 	CodeAddr *common.Address
-	Input    []byte
-
-	Gas   uint64
+	//参数
+	Input []byte
+	//合约级的gas是啥意思？
+	Gas uint64
+	//转账金额
 	value *big.Int
 }
 
 // NewContract returns a new contract environment for the execution of EVM.
 func NewContract(caller ContractRef, object ContractRef, value *big.Int, gas uint64) *Contract {
 	c := &Contract{CallerAddress: caller.Address(), caller: caller, self: object}
-
+	//如果调用者也是合约
 	if parent, ok := caller.(*Contract); ok {
 		// Reuse JUMPDEST analysis from parent context if available.
 		c.jumpdests = parent.jumpdests

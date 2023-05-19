@@ -63,6 +63,7 @@ func MakeSigner(config *params.ChainConfig, blockNumber *big.Int, blockTime uint
 //
 // Use this in transaction-handling code where the current block number is unknown. If you
 // have the current block number available, use MakeSigner instead.
+// 根据里程碑返回signer
 func LatestSigner(config *params.ChainConfig) Signer {
 	if config.ChainID != nil {
 		if config.CancunTime != nil {
@@ -160,6 +161,7 @@ func Sender(signer Signer, tx *Transaction) (common.Address, error) {
 // new protocol rules.
 type Signer interface {
 	// Sender returns the sender address of the transaction.
+	//返回交易的发送者地址
 	Sender(tx *Transaction) (common.Address, error)
 
 	// SignatureValues returns the raw R, S, V values corresponding to the

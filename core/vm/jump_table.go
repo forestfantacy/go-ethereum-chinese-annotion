@@ -29,6 +29,7 @@ type (
 	memorySizeFunc func(*Stack) (size uint64, overflow bool)
 )
 
+// 操作包含执行函数、静态gas、动态gas、最大最小栈长度、所需内存大小
 type operation struct {
 	// execute is the operation function
 	execute     executionFunc
@@ -44,6 +45,7 @@ type operation struct {
 	memorySize memorySizeFunc
 }
 
+// 不同阶段的操作
 var (
 	frontierInstructionSet         = newFrontierInstructionSet()
 	homesteadInstructionSet        = newHomesteadInstructionSet()
@@ -59,6 +61,7 @@ var (
 )
 
 // JumpTable contains the EVM opcodes supported at a given fork.
+// 跳表就是一组操作
 type JumpTable [256]*operation
 
 func validate(jt JumpTable) JumpTable {

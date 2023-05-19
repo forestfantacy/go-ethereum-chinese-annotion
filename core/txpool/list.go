@@ -53,9 +53,11 @@ func (h *nonceHeap) Pop() interface{} {
 // sortedMap is a nonce->transaction hash map with a heap based index to allow
 // iterating over the contents in a nonce-incrementing way.
 type sortedMap struct {
+	//nonce->transaction
 	items map[uint64]*types.Transaction // Hash map storing the transaction data
-	index *nonceHeap                    // Heap of nonces of all the stored transactions (non-strict mode)
-	cache types.Transactions            // Cache of the transactions already sorted
+	//nonce-incrementing []uint64
+	index *nonceHeap         // Heap of nonces of all the stored transactions (non-strict mode)
+	cache types.Transactions // Cache of the transactions already sorted
 }
 
 // newSortedMap creates a new nonce-sorted transaction map.

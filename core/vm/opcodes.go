@@ -21,6 +21,7 @@ import (
 )
 
 // OpCode is an EVM opcode
+// 操作码（字节类型）
 type OpCode byte
 
 // IsPush specifies if an opcode is a PUSH opcode.

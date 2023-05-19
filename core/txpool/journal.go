@@ -43,6 +43,7 @@ func (*devNull) Close() error                      { return nil }
 
 // journal is a rotating log of transactions with the aim of storing locally
 // created transactions to allow non-executed ones to survive node restarts.
+//本地创建的交易的交易日志，非本地的交易没有日志
 type journal struct {
 	path   string         // Filesystem path to store the transactions at
 	writer io.WriteCloser // Output stream to write new transactions into
@@ -57,6 +58,7 @@ func newTxJournal(path string) *journal {
 
 // load parses a transaction journal dump from disk, loading its contents into
 // the specified pool.
+//从磁盘中加载日志，解析成交易写入事务池中
 func (journal *journal) load(add func([]*types.Transaction) []error) error {
 	// Open the journal for loading any past transactions
 	input, err := os.Open(journal.path)
@@ -117,6 +119,7 @@ func (journal *journal) load(add func([]*types.Transaction) []error) error {
 	return failure
 }
 
+//将交易写入磁盘
 // insert adds the specified transaction to the local disk journal.
 func (journal *journal) insert(tx *types.Transaction) error {
 	if journal.writer == nil {
@@ -130,6 +133,7 @@ func (journal *journal) insert(tx *types.Transaction) error {
 
 // rotate regenerates the transaction journal based on the current contents of
 // the transaction pool.
+// 将当前交易池的交易落盘
 func (journal *journal) rotate(all map[common.Address]types.Transactions) error {
 	// Close the current journal (if any is open)
 	if journal.writer != nil {

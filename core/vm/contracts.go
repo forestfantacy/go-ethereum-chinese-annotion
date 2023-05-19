@@ -35,10 +35,15 @@ import (
 // PrecompiledContract is the basic interface for native Go contracts. The implementation
 // requires a deterministic gas count based on the input size of the Run method of the
 // contract.
+// 预编译合约
 type PrecompiledContract interface {
-	RequiredGas(input []byte) uint64  // RequiredPrice calculates the contract gas use
+	// RequiredGas gas的计算方法
+	RequiredGas(input []byte) uint64 // RequiredPrice calculates the contract gas use
+	// Run 合约调用入口
 	Run(input []byte) ([]byte, error) // Run runs the precompiled contract
 }
+
+//以太坊不同里程碑的预编译合约集，这些合约都实现了 预编译合约接口PrecompiledContract 的两个方法
 
 // PrecompiledContractsHomestead contains the default set of pre-compiled Ethereum
 // contracts used in the Frontier and Homestead releases.
@@ -127,6 +132,7 @@ func init() {
 }
 
 // ActivePrecompiles returns the precompiles enabled with the current configuration.
+// 根据当前配置返回合约集
 func ActivePrecompiles(rules params.Rules) []common.Address {
 	switch {
 	case rules.IsBerlin:
@@ -145,13 +151,19 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 // - the returned bytes,
 // - the _remaining_ gas,
 // - any error that occurred
+// 运行预编译合约
 func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64) (ret []byte, remainingGas uint64, err error) {
+	//根据参数计算gas消耗
 	gasCost := p.RequiredGas(input)
+	//如果声明支付的gas < gas消耗，返回 outOfGas
 	if suppliedGas < gasCost {
 		return nil, 0, ErrOutOfGas
 	}
+	//扣减gas
 	suppliedGas -= gasCost
+	//运行得到结果
 	output, err := p.Run(input)
+	//返回结果和剩余gas
 	return output, suppliedGas, err
 }
 

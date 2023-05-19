@@ -143,6 +143,7 @@ var (
 // TxStatus is the current status of a transaction as seen by the pool.
 type TxStatus uint
 
+// 未知、入队、未确认、已加入
 const (
 	TxStatusUnknown TxStatus = iota
 	TxStatusQueued
@@ -152,6 +153,7 @@ const (
 
 // blockChain provides the state of blockchain and current gas limit to do
 // some pre checks in tx pool and event subscribers.
+// 区块链行为：读取当前区块、根据hash或number获取区块、订阅区块头事件
 type blockChain interface {
 	CurrentBlock() *types.Header
 	GetBlock(hash common.Hash, number uint64) *types.Block
@@ -241,15 +243,17 @@ func (config *Config) sanitize() Config {
 // The pool separates processable transactions (which can be applied to the
 // current state) and future transactions. Transactions move between those
 // two states over time as they are received and processed.
+// TxPool包含所有当前已知的交易，交易是从网络接收或本地提交时进入池中，当被包含在区块链中时，它们就会退出池
 type TxPool struct {
 	config      Config
 	chainconfig *params.ChainConfig
 	chain       blockChain
-	gasPrice    *big.Int
-	txFeed      event.Feed
-	scope       event.SubscriptionScope
-	signer      types.Signer
-	mu          sync.RWMutex
+	//低于gasPrice的交易被丢弃
+	gasPrice *big.Int
+	txFeed   event.Feed
+	scope    event.SubscriptionScope
+	signer   types.Signer
+	mu       sync.RWMutex
 
 	istanbul atomic.Bool // Fork indicator whether we are in the istanbul stage.
 	eip2718  atomic.Bool // Fork indicator whether we are using EIP-2718 type transactions.
@@ -260,14 +264,20 @@ type TxPool struct {
 	pendingNonces *noncer        // Pending state tracking virtual nonces
 	currentMaxGas atomic.Uint64  // Current gas limit for transaction caps
 
-	locals  *accountSet // Set of local transaction to exempt from eviction rules
-	journal *journal    // Journal of local transaction to back up to disk
+	//免除驱逐规则的本地事务
+	locals *accountSet // Set of local transaction to exempt from eviction rules
+	//备份到磁盘的本地交易恢复日志
+	journal *journal // Journal of local transaction to back up to disk
 
-	pending map[common.Address]*list     // All currently processable transactions
-	queue   map[common.Address]*list     // Queued but non-processable transactions
-	beats   map[common.Address]time.Time // Last heartbeat from each known account
-	all     *lookup                      // All transactions to allow lookups
-	priced  *pricedList                  // All transactions sorted by price
+	//所有待处理的交易
+	pending map[common.Address]*list // All currently processable transactions
+	//除不可处理的交易
+	queue map[common.Address]*list // Queued but non-processable transactions
+	//每个已知账户的最后心跳时间
+	beats map[common.Address]time.Time // Last heartbeat from each known account
+	all   *lookup                      // All transactions to allow lookups
+	//按价格排序的交易列表
+	priced *pricedList // All transactions sorted by price
 
 	chainHeadCh     chan core.ChainHeadEvent
 	chainHeadSub    event.Subscription
@@ -288,6 +298,7 @@ type txpoolResetRequest struct {
 
 // NewTxPool creates a new transaction pool to gather, sort and filter inbound
 // transactions from the network.
+// 收集、排序、过滤从网络或本地提交的交易
 func NewTxPool(config Config, chainconfig *params.ChainConfig, chain blockChain) *TxPool {
 	// Sanitize the input to ensure no vulnerable gas prices are set
 	config = (&config).sanitize()
@@ -311,7 +322,9 @@ func NewTxPool(config Config, chainconfig *params.ChainConfig, chain blockChain)
 		initDoneCh:      make(chan struct{}),
 		gasPrice:        new(big.Int).SetUint64(config.PriceLimit),
 	}
+	//根据signer（私钥）创建的一组地址
 	pool.locals = newAccountSet(pool.signer)
+	//与配置中的地址合并
 	for _, addr := range config.Locals {
 		log.Info("Setting new local account", "address", addr)
 		pool.locals.add(addr)
@@ -320,10 +333,14 @@ func NewTxPool(config Config, chainconfig *params.ChainConfig, chain blockChain)
 	pool.reset(nil, chain.CurrentBlock())
 
 	// Start the reorg loop early so it can handle requests generated during journal loading.
+	//早点开始重组织reorg，以便能处理从磁盘日志恢复的交易
 	pool.wg.Add(1)
+
+	//定期对交易执行 reset promoteExecutables
 	go pool.scheduleReorgLoop()
 
 	// If local transactions and journaling is enabled, load from disk
+	//从本地磁盘恢复交易
 	if !config.NoLocals && config.Journal != "" {
 		pool.journal = newTxJournal(config.Journal)
 
@@ -336,8 +353,11 @@ func NewTxPool(config Config, chainconfig *params.ChainConfig, chain blockChain)
 	}
 
 	// Subscribe events from blockchain and start the main event loop.
+	//订阅新区块事件
 	pool.chainHeadSub = pool.chain.SubscribeChainHeadEvent(pool.chainHeadCh)
 	pool.wg.Add(1)
+
+	//处理收到新区块，定期清理不活跃账户的交易，定期将当前交易池的交易落盘
 	go pool.loop()
 
 	return pool
@@ -346,6 +366,7 @@ func NewTxPool(config Config, chainconfig *params.ChainConfig, chain blockChain)
 // loop is the transaction pool's main event loop, waiting for and reacting to
 // outside blockchain events as well as for various reporting and transaction
 // eviction events.
+//处理收到新区块，定期清理不活跃账户的交易，定期将当前交易池的交易落盘
 func (pool *TxPool) loop() {
 	defer pool.wg.Done()
 
@@ -367,9 +388,12 @@ func (pool *TxPool) loop() {
 	for {
 		select {
 		// Handle ChainHeadEvent
+		//收到新区块
 		case ev := <-pool.chainHeadCh:
 			if ev.Block != nil {
+				//重置交易池
 				pool.requestReset(head, ev.Block.Header())
+				//更新当前区块头
 				head = ev.Block.Header()
 			}
 
@@ -391,14 +415,17 @@ func (pool *TxPool) loop() {
 			}
 
 		// Handle inactive account transaction eviction
+		//定期清理不活跃账户的交易
 		case <-evict.C:
 			pool.mu.Lock()
 			for addr := range pool.queue {
 				// Skip local transactions from the eviction mechanism
+				//忽略本地免驱逐列表中的地址
 				if pool.locals.contains(addr) {
 					continue
 				}
 				// Any non-locals old enough should be removed
+				//上次心跳时间过久的账户，与之关联的交易都删掉
 				if time.Since(pool.beats[addr]) > pool.config.Lifetime {
 					list := pool.queue[addr].Flatten()
 					for _, tx := range list {
@@ -410,6 +437,7 @@ func (pool *TxPool) loop() {
 			pool.mu.Unlock()
 
 		// Handle local transaction journal rotation
+		// 定期将当前交易池的交易落盘
 		case <-journal.C:
 			if pool.journal != nil {
 				pool.mu.Lock()
@@ -453,6 +481,7 @@ func (pool *TxPool) GasPrice() *big.Int {
 
 // SetGasPrice updates the minimum price required by the transaction pool for a
 // new transaction, and drops all transactions below this threshold.
+// 修改最低gas价格，如果提升了，那么把当前不够新价格的交易清掉
 func (pool *TxPool) SetGasPrice(price *big.Int) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
@@ -474,6 +503,7 @@ func (pool *TxPool) SetGasPrice(price *big.Int) {
 
 // Nonce returns the next nonce of an account, with all transactions executable
 // by the pool already applied on top.
+// 指定账户的下一个随机数
 func (pool *TxPool) Nonce(addr common.Address) uint64 {
 	pool.mu.RLock()
 	defer pool.mu.RUnlock()
@@ -506,6 +536,7 @@ func (pool *TxPool) stats() (int, int) {
 
 // Content retrieves the data content of the transaction pool, returning all the
 // pending as well as queued transactions, grouped by account and sorted by nonce.
+// 返回当前交易池中，所有待处理的交易，按照账户分组后，每组按随机数排序
 func (pool *TxPool) Content() (map[common.Address]types.Transactions, map[common.Address]types.Transactions) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
@@ -545,6 +576,7 @@ func (pool *TxPool) ContentFrom(addr common.Address) (types.Transactions, types.
 // The enforceTips parameter can be used to do an extra filtering on the pending
 // transactions and only return those whose **effective** tip is large enough in
 // the next pending execution environment.
+// 查询所有可处理的交易，分组&排序，然后按enforceTips过滤
 func (pool *TxPool) Pending(enforceTips bool) map[common.Address]types.Transactions {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
@@ -1131,6 +1163,7 @@ func (pool *TxPool) removeTx(hash common.Hash, outofbound bool) int {
 
 // requestReset requests a pool reset to the new head block.
 // The returned channel is closed when the reset has occurred.
+//交易池重置请求
 func (pool *TxPool) requestReset(oldHead *types.Header, newHead *types.Header) chan struct{} {
 	select {
 	case pool.reqResetCh <- &txpoolResetRequest{oldHead, newHead}:
@@ -1162,6 +1195,7 @@ func (pool *TxPool) queueTxEvent(tx *types.Transaction) {
 // scheduleReorgLoop schedules runs of reset and promoteExecutables. Code above should not
 // call those methods directly, but request them being run using requestReset and
 // requestPromoteExecutables instead.
+//定时对交易执行 reset promoteExecutables
 func (pool *TxPool) scheduleReorgLoop() {
 	defer pool.wg.Done()
 
@@ -1177,6 +1211,7 @@ func (pool *TxPool) scheduleReorgLoop() {
 		// Launch next background reorg if needed
 		if curDone == nil && launchNextRun {
 			// Run the background reorg and announcements
+			//刷新和重组织交易池的交易
 			go pool.runReorg(nextDone, reset, dirtyAccounts, queuedEvents)
 
 			// Prepare everything for the next round of reorg
@@ -1187,8 +1222,9 @@ func (pool *TxPool) scheduleReorgLoop() {
 			queuedEvents = make(map[common.Address]*sortedMap)
 		}
 
+		//下面只修改变量，没有逻辑，逻辑在1215行	 go pool.runReorg(nextDone, reset, dirtyAccounts, queuedEvents)
 		select {
-		case req := <-pool.reqResetCh:
+		case req := <-pool.reqResetCh: //reset
 			// Reset request: update head if request is already pending.
 			if reset == nil {
 				reset = req
@@ -1198,7 +1234,7 @@ func (pool *TxPool) scheduleReorgLoop() {
 			launchNextRun = true
 			pool.reorgDoneCh <- nextDone
 
-		case req := <-pool.reqPromoteCh:
+		case req := <-pool.reqPromoteCh: //promote
 			// Promote request: update address set if request is already pending.
 			if dirtyAccounts == nil {
 				dirtyAccounts = req
@@ -1232,12 +1268,14 @@ func (pool *TxPool) scheduleReorgLoop() {
 }
 
 // runReorg runs reset and promoteExecutables on behalf of scheduleReorgLoop.
+//执行交易池的reset和将交易提升至待处理队列
 func (pool *TxPool) runReorg(done chan struct{}, reset *txpoolResetRequest, dirtyAccounts *accountSet, events map[common.Address]*sortedMap) {
 	defer func(t0 time.Time) {
 		reorgDurationTimer.Update(time.Since(t0))
 	}(time.Now())
 	defer close(done)
 
+	//提升地址列表：脏地址 || reset all
 	var promoteAddrs []common.Address
 	if dirtyAccounts != nil && reset == nil {
 		// Only dirty accounts need to be promoted, unless we're resetting.
@@ -1264,11 +1302,13 @@ func (pool *TxPool) runReorg(done chan struct{}, reset *txpoolResetRequest, dirt
 		}
 	}
 	// Check for pending transactions for every account that sent new ones
+	//根据地址找到对应的交易，然后执行提升（清理低nonce balance），再放入可处理的交易队列
 	promoted := pool.promoteExecutables(promoteAddrs)
 
 	// If a new block appeared, validate the pool of pending transactions. This will
 	// remove any transaction that has been included in the block or was invalidated
 	// because of another transaction (e.g. higher gas price).
+	//如果出现新区块，那么交易池中待处理的交易要更新一遍，把区块中已经包含的交易删掉
 	if reset != nil {
 		pool.demoteUnexecutables()
 		if reset.newHead != nil && pool.chainconfig.IsLondon(new(big.Int).Add(reset.newHead.Number, big.NewInt(1))) {
@@ -1284,6 +1324,7 @@ func (pool *TxPool) runReorg(done chan struct{}, reset *txpoolResetRequest, dirt
 		pool.pendingNonces.setAll(nonces)
 	}
 	// Ensure pool.queue and pool.pending sizes stay within the configured limits.
+	//清理队列保证长度
 	pool.truncatePending()
 	pool.truncateQueue()
 
@@ -1310,6 +1351,7 @@ func (pool *TxPool) runReorg(done chan struct{}, reset *txpoolResetRequest, dirt
 
 // reset retrieves the current state of the blockchain and ensures the content
 // of the transaction pool is valid with regard to the chain state.
+// reset获取区块链的当前状态，并确保交易池的内容相对于链状态是有效的
 func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	// If we're reorging an old state, reinject all dropped transactions
 	var reinject types.Transactions
@@ -1403,6 +1445,7 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 // promoteExecutables moves transactions that have become processable from the
 // future queue to the set of pending transactions. During this process, all
 // invalidated transactions (low nonce, low balance) are deleted.
+// 提升可执行的交易：把已经是可处理的交易从future队列，移动到待处理队列，这个过程中，低nonce、低余额的交易将被删除
 func (pool *TxPool) promoteExecutables(accounts []common.Address) []*types.Transaction {
 	// Track the promoted transactions to broadcast them at once
 	var promoted []*types.Transaction
@@ -1670,6 +1713,7 @@ func (a addressesByHeartbeat) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 
 // accountSet is simply a set of addresses to check for existence, and a signer
 // capable of deriving addresses from transactions.
+// 还原交易的发送者地址，由accounts维护
 type accountSet struct {
 	accounts map[common.Address]struct{}
 	signer   types.Signer
@@ -1678,6 +1722,7 @@ type accountSet struct {
 
 // newAccountSet creates a new address set with an associated signer for sender
 // derivations.
+// 根据signer（私钥）创建的一组地址
 func newAccountSet(signer types.Signer, addrs ...common.Address) *accountSet {
 	as := &accountSet{
 		accounts: make(map[common.Address]struct{}, len(addrs)),
