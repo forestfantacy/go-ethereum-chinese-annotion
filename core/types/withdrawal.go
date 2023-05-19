@@ -28,6 +28,7 @@ import (
 //go:generate go run ../../rlp/rlpgen -type Withdrawal -out gen_withdrawal_rlp.go
 
 // Withdrawal represents a validator withdrawal from the consensus layer.
+// 退款操作？
 type Withdrawal struct {
 	Index     uint64         `json:"index"`          // monotonically increasing identifier issued by consensus layer
 	Validator uint64         `json:"validatorIndex"` // index of validator associated with withdrawal

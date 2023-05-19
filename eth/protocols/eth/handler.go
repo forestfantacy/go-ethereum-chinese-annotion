@@ -76,6 +76,7 @@ type Backend interface {
 	// should do any peer maintenance work, handshakes and validations. If all
 	// is passed, control should be given back to the `handler` to process the
 	// inbound messages going forward.
+	//peer的握手、认证在这里搞
 	RunPeer(peer *Peer, handler Handler) error
 
 	// PeerInfo retrieves all known `eth` information about a peer.
@@ -94,7 +95,7 @@ type TxPool interface {
 }
 
 // MakeProtocols constructs the P2P protocol definitions for `eth`.
-//创建ETH68, ETH67, ETH66
+// 创建ETH68, ETH67, ETH66
 func MakeProtocols(backend Backend, network uint64, dnsdisc enode.Iterator) []p2p.Protocol {
 	protocols := make([]p2p.Protocol, len(ProtocolVersions))
 	for i, version := range ProtocolVersions {
@@ -104,11 +105,13 @@ func MakeProtocols(backend Backend, network uint64, dnsdisc enode.Iterator) []p2
 			Name:    ProtocolName,
 			Version: version,
 			Length:  protocolLengths[version],
+			//协议就是通讯主体、消息和处理逻辑：有了peer，就有了远程节点和与之通讯的消息能力
 			Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
 				peer := NewPeer(version, p, rw, backend.TxPool())
 				defer peer.Close()
 
 				return backend.RunPeer(peer, func(peer *Peer) error {
+					//处理数据包在这里搞
 					return Handle(backend, peer)
 				})
 			},

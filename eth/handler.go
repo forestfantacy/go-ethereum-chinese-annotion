@@ -52,6 +52,7 @@ var (
 
 // txPool defines the methods needed from a transaction pool implementation to
 // support all the operations needed by the Ethereum chain protocols.
+//定义交易池行为：判断交易是否存在、根据hash查询交易、添加交易、获取未确认交易、订阅新交易事件
 type txPool interface {
 	// Has returns an indicator whether txpool has a transaction
 	// cached with the given hash.
@@ -76,17 +77,19 @@ type txPool interface {
 // handlerConfig is the collection of initialization parameters to create a full
 // node network handler.
 type handlerConfig struct {
-	Database       ethdb.Database         // Database for direct sync insertions
-	Chain          *core.BlockChain       // Blockchain to serve data from
-	TxPool         txPool                 // Transaction pool to propagate from
-	Merger         *consensus.Merger      // The manager for eth1/2 transition
-	Network        uint64                 // Network identifier to adfvertise
-	Sync           downloader.SyncMode    // Whether to snap or full sync
-	BloomCache     uint64                 // Megabytes to alloc for snap sync bloom
-	EventMux       *event.TypeMux         // Legacy event mux, deprecate for `feed`
+	Database   ethdb.Database      // Database for direct sync insertions
+	Chain      *core.BlockChain    // Blockchain to serve data from
+	TxPool     txPool              // Transaction pool to propagate from
+	Merger     *consensus.Merger   // The manager for eth1/2 transition
+	Network    uint64              // Network identifier to adfvertise
+	Sync       downloader.SyncMode // Whether to snap or full sync
+	BloomCache uint64              // Megabytes to alloc for snap sync bloom
+	EventMux   *event.TypeMux      // Legacy event mux, deprecate for `feed`
+	//number -> hash
 	RequiredBlocks map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
 }
 
+//以太坊协议管理组件，比如挖矿广播、交易广播、查询区块、区块头等
 type handler struct {
 	networkID  uint64
 	forkFilter forkid.Filter // Fork ID filter, constant across the lifetime of the node
@@ -281,6 +284,12 @@ func newHandler(config *handlerConfig) (*handler, error) {
 
 // runEthPeer registers an eth peer into the joint eth/snap peerset, adds it to
 // various subsystems and starts handling messages.
+//新peer的启用流程：
+//先基于基础信息与之握手协商
+//把新peer加到downloader, fetchers and main peer set
+//把内存中的交易同步给新peer
+//从新peer下载指定的区块
+//把新peer交给handler
 func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 	// If the peer has a `snap` extension, wait for it to connect so we can have
 	// a uniform initialization/teardown mechanism
@@ -305,6 +314,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 		td      = h.chain.GetTd(hash, number)
 	)
 	forkID := forkid.NewID(h.chain.Config(), genesis.Hash(), number, head.Time)
+	//与peer协商：version number,network IDs, difficulties, head and genesis block
 	if err := peer.Handshake(h.networkID, td, hash, genesis.Hash(), forkID, h.forkFilter); err != nil {
 		peer.Log().Debug("Ethereum handshake failed", "err", err)
 		return err
@@ -327,6 +337,8 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 		}
 	}
 	peer.Log().Debug("Ethereum peer connected", "name", peer.Name())
+
+	//新peer将被用于downloader, fetchers and main peer set
 
 	// Register the peer locally
 	if err := h.peers.registerPeer(peer, snap); err != nil {
@@ -354,6 +366,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 
 	// Propagate existing transactions. new transactions appearing
 	// after this will be sent via broadcasts.
+	//把当前所有的交易发给peer
 	h.syncTransactions(peer)
 
 	// Create a notification channel for pending requests if the peer goes down
@@ -361,10 +374,11 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 	defer close(dead)
 
 	// If we have any explicit peer required block hashes, request them
+	//从peer下载配置中指定的区块，如果没有报错，peer
 	for number, hash := range h.requiredBlocks {
 		resCh := make(chan *eth.Response)
-
 		req, err := peer.RequestHeadersByNumber(number, 1, 0, false, resCh)
+		//查区块头报错，peer不符合要求
 		if err != nil {
 			return err
 		}
@@ -402,6 +416,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 			}
 		}(number, hash, req)
 	}
+
 	// Handle incoming messages until the connection is torn down
 	return handler(peer)
 }
@@ -467,15 +482,18 @@ func (h *handler) Start(maxPeers int) {
 	h.wg.Add(1)
 	h.txsCh = make(chan core.NewTxsEvent, txChanSize)
 	h.txsSub = h.txpool.SubscribeNewTxsEvent(h.txsCh)
+	//广播新交易给peer
 	go h.txBroadcastLoop()
 
 	// broadcast mined blocks
 	h.wg.Add(1)
 	h.minedBlockSub = h.eventMux.Subscribe(core.NewMinedBlockEvent{})
+	//广播新区块给peer
 	go h.minedBroadcastLoop()
 
 	// start sync handlers
 	h.wg.Add(1)
+	//抓取其他peer的区块和交易
 	go h.chainSync.loop()
 }
 
@@ -503,6 +521,8 @@ func (h *handler) Stop() {
 func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
 	// Disable the block propagation if the chain has already entered the PoS
 	// stage. The block propagation is delegated to the consensus layer.
+	//POS阶段 对外广播区块已交给共识层，不再由eth.handler处理。
+	//block propagation 指的是区块传播，不包含自己挖的区块
 	if h.merger.PoSFinalized() {
 		return
 	}

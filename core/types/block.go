@@ -185,7 +185,8 @@ type Block struct {
 	header       *Header
 	uncles       []*Header
 	transactions Transactions
-	withdrawals  Withdrawals
+	//回退日志？
+	withdrawals Withdrawals
 
 	// caches
 	hash atomic.Value
@@ -193,11 +194,14 @@ type Block struct {
 
 	// These fields are used by package eth to track
 	// inter-peer block relay.
-	ReceivedAt   time.Time
+	//同步时间
+	ReceivedAt time.Time
+	//同步来源
 	ReceivedFrom interface{}
 }
 
 // "external" block encoding. used for eth protocol, etc.
+// 更简单的block结构体，只保留核心字段
 type extblock struct {
 	Header      *Header
 	Txs         []*Transaction

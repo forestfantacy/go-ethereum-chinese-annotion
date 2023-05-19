@@ -31,6 +31,7 @@ import (
 // the skeleton syncer has successfully reverse downloaded all the headers up to
 // the genesis block or an existing header in the database. Its operation is fully
 // directed by the skeleton sync's head/tail events.
+// 当头文件下载完毕后，开始回填
 type beaconBackfiller struct {
 	downloader *Downloader   // Downloader to direct via this callback implementation
 	syncMode   SyncMode      // Sync mode to use for backfilling the skeleton chains
@@ -51,6 +52,7 @@ func newBeaconBackfiller(dl *Downloader, success func()) backfiller {
 
 // suspend cancels any background downloader threads and returns the last header
 // that has been successfully backfilled.
+// 取消后台下载线程，返回成功回填的最新的区块头
 func (b *beaconBackfiller) suspend() *types.Header {
 	// If no filling is running, don't waste cycles
 	b.lock.Lock()
@@ -150,6 +152,7 @@ func (d *Downloader) SetBadBlockCallback(onBadBlock badBlockFn) {
 //
 // Internally backfilling and state sync is done the same way, but the header
 // retrieval and scheduling is replaced.
+// BeaconSync是链同步的合并后版本，链不是从创世纪开始下载的，而是从可信的head声明下载的
 func (d *Downloader) BeaconSync(mode SyncMode, head *types.Header, final *types.Header) error {
 	return d.beaconSync(mode, head, final, true)
 }
@@ -160,6 +163,9 @@ func (d *Downloader) BeaconSync(mode SyncMode, head *types.Header, final *types.
 //
 // This is useful if a beacon client is feeding us large chunks of payloads to run,
 // but is not setting the head after each.
+// BeaconExtend是一个乐观版本的BeaconSync，
+// 它尝试使用新的区块头扩展当前信标链，但如果不匹配，
+// 旧的同步不会被终止和重组，而是丢弃新的区块头。
 func (d *Downloader) BeaconExtend(mode SyncMode, head *types.Header) error {
 	return d.beaconSync(mode, head, nil, false)
 }
@@ -191,6 +197,7 @@ func (d *Downloader) beaconSync(mode SyncMode, head *types.Header, final *types.
 // sync and on the correct chain, checking the top N links should already get us
 // a match. In the rare scenario when we ended up on a long reorganisation (i.e.
 // none of the head links match), we do a binary search to find the ancestor.
+// 查找信标链和本地链公共的祖先
 func (d *Downloader) findBeaconAncestor() (uint64, error) {
 	// Figure out the current local head position
 	var chainHead *types.Header
@@ -269,6 +276,7 @@ func (d *Downloader) findBeaconAncestor() (uint64, error) {
 
 // fetchBeaconHeaders feeds skeleton headers to the downloader queue for scheduling
 // until sync errors or is finished.
+// 向下载队列提供主体区块头
 func (d *Downloader) fetchBeaconHeaders(from uint64) error {
 	var head *types.Header
 	_, tail, _, err := d.skeleton.Bounds()

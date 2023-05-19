@@ -23,9 +23,12 @@ import "fmt"
 type SyncMode uint32
 
 const (
-	FullSync  SyncMode = iota // Synchronise the entire blockchain history from full blocks
-	SnapSync                  // Download the chain and the state via compact snapshots
-	LightSync                 // Download only the headers and terminate afterwards
+	// FullSync 完全同步：整个区块链历史
+	FullSync SyncMode = iota // Synchronise the entire blockchain history from full blocks
+	// SnapSync 快照同步：下载压缩过的快照
+	SnapSync // Download the chain and the state via compact snapshots
+	// LightSync 轻同步：只下载区块头
+	LightSync // Download only the headers and terminate afterwards
 )
 
 func (mode SyncMode) IsValid() bool {

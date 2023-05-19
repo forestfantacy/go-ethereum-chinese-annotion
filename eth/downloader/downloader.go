@@ -161,6 +161,7 @@ type Downloader struct {
 }
 
 // LightChain encapsulates functions required to synchronise a light chain.
+// 同步轻区块链所需的函数
 type LightChain interface {
 	// HasHeader verifies a header's presence in the local chain.
 	HasHeader(common.Hash, uint64) bool
@@ -182,6 +183,7 @@ type LightChain interface {
 }
 
 // BlockChain encapsulates functions required to sync a (full or snap) blockchain.
+// 同步(完整或快照)区块链所需的函数
 type BlockChain interface {
 	LightChain
 

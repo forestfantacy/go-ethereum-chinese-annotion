@@ -90,6 +90,7 @@ func (api *DownloaderAPI) eventLoop() {
 }
 
 // Syncing provides information when this nodes starts synchronising with the Ethereum network and when it's finished.
+// 节点同步以太网过程中的状态等信息
 func (api *DownloaderAPI) Syncing(ctx context.Context) (*rpc.Subscription, error) {
 	notifier, supported := rpc.NotifierFromContext(ctx)
 	if !supported {

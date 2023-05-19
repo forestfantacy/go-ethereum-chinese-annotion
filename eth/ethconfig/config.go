@@ -207,8 +207,10 @@ func CreateConsensusEngine(stack *node.Node, ethashConfig *ethash.Config, clique
 	// If proof-of-authority is requested, set it up
 	var engine consensus.Engine
 	if cliqueConfig != nil {
+		//proof-of-authority for testnet
 		engine = clique.New(cliqueConfig, db)
 	} else {
+		//proof-of-work
 		switch ethashConfig.PowMode {
 		case ethash.ModeFake:
 			log.Warn("Ethash used in fake mode")

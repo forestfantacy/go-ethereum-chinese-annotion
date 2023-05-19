@@ -62,6 +62,7 @@ import (
 type Config = ethconfig.Config
 
 // Ethereum implements the Ethereum full node service.
+// Ethereum代表是以太坊全节点，是最大的对象，包含了所有功能组件功能，比如区块链、协议、网络、共识、矿工、布隆索引、等等
 type Ethereum struct {
 	config *ethconfig.Config
 
@@ -86,8 +87,10 @@ type Ethereum struct {
 
 	APIBackend *EthAPIBackend
 
-	miner     *miner.Miner
-	gasPrice  *big.Int
+	miner *miner.Miner
+	//矿工配置决定
+	gasPrice *big.Int
+	//当前节点矿工地址
 	etherbase common.Address
 
 	networkID     uint64
@@ -126,10 +129,12 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	log.Info("Allocated trie memory caches", "clean", common.StorageSize(config.TrieCleanCache)*1024*1024, "dirty", common.StorageSize(config.TrieDirtyCache)*1024*1024)
 
 	// Assemble the Ethereum object
+	//打开本地数据库
 	chainDb, err := stack.OpenDatabaseWithFreezer("chaindata", config.DatabaseCache, config.DatabaseHandles, config.DatabaseFreezer, "eth/db/chaindata/", false)
 	if err != nil {
 		return nil, err
 	}
+	//恢复prune过程，用于系统奔溃恢复
 	if err := pruner.RecoverPruning(stack.ResolvePath(""), chainDb, stack.ResolvePath(config.TrieCleanCacheJournal)); err != nil {
 		log.Error("Failed to recover state", "error", err)
 	}
@@ -140,6 +145,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	//信标共识引擎
 	engine := ethconfig.CreateConsensusEngine(stack, &ethashConfig, cliqueConfig, config.Miner.Notify, config.Miner.Noverify, chainDb)
 
 	eth := &Ethereum{
@@ -197,6 +204,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if config.OverrideCancun != nil {
 		overrides.OverrideCancun = config.OverrideCancun
 	}
+
+	//eth.区块链
 	eth.blockchain, err = core.NewBlockChain(chainDb, cacheConfig, config.Genesis, &overrides, eth.engine, vmConfig, eth.shouldPreserve, &config.TxLookupLimit)
 	if err != nil {
 		return nil, err
@@ -210,6 +219,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Permit the downloader to use the trie cache allowance during fast sync
 	cacheLimit := cacheConfig.TrieCleanLimit + cacheConfig.TrieDirtyLimit + cacheConfig.SnapshotLimit
+	//handle负责处理所有管理协议
 	if eth.handler, err = newHandler(&handlerConfig{
 		Database:       chainDb,
 		Chain:          eth.blockchain,
@@ -253,6 +263,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Register the backend on the node
 	stack.RegisterAPIs(eth.APIs())
+	//注册所有以太坊应用层协议
 	stack.RegisterProtocols(eth.Protocols())
 	stack.RegisterLifecycle(eth)
 
@@ -311,10 +322,12 @@ func (s *Ethereum) APIs() []rpc.API {
 	}...)
 }
 
+// ResetWithGenesisBlock 将区块链恢复到创世纪区块
 func (s *Ethereum) ResetWithGenesisBlock(gb *types.Block) {
 	s.blockchain.ResetWithGenesisBlock(gb)
 }
 
+// Etherbase 查询本地矿工地址
 func (s *Ethereum) Etherbase() (eb common.Address, err error) {
 	s.lock.RLock()
 	etherbase := s.etherbase
@@ -331,6 +344,7 @@ func (s *Ethereum) Etherbase() (eb common.Address, err error) {
 //
 // We regard two types of accounts as local miner account: etherbase
 // and accounts specified via `txpool.locals` flag.
+// 是否是本地所挖的区块
 func (s *Ethereum) isLocalBlock(header *types.Header) bool {
 	author, err := s.engine.Author(header)
 	if err != nil {
@@ -357,6 +371,7 @@ func (s *Ethereum) isLocalBlock(header *types.Header) bool {
 // shouldPreserve checks whether we should preserve the given block
 // during the chain reorg depending on whether the author of block
 // is a local account.
+// 是否保留header，本地挖的区块保留
 func (s *Ethereum) shouldPreserve(header *types.Header) bool {
 	// The reason we need to disable the self-reorg preserving for clique
 	// is it can be probable to introduce a deadlock.
@@ -381,6 +396,7 @@ func (s *Ethereum) shouldPreserve(header *types.Header) bool {
 }
 
 // SetEtherbase sets the mining reward address.
+// 设置矿工地址
 func (s *Ethereum) SetEtherbase(etherbase common.Address) {
 	s.lock.Lock()
 	s.etherbase = etherbase
@@ -432,6 +448,7 @@ func (s *Ethereum) StartMining(threads int) error {
 				log.Error("Etherbase account unavailable locally", "err", err)
 				return fmt.Errorf("signer missing: %v", err)
 			}
+			//共识层的身份认证，所以只要认证的矿工才能挖矿
 			cli.Authorize(eb, wallet.SignData)
 		}
 		// If mining is started, we can disable the transaction rejection mechanism
@@ -481,6 +498,7 @@ func (s *Ethereum) SyncMode() downloader.SyncMode {
 // Protocols returns all the currently configured
 // network protocols to start.
 func (s *Ethereum) Protocols() []p2p.Protocol {
+	//构建所有协议
 	protos := eth.MakeProtocols((*ethHandler)(s.handler), s.networkID, s.ethDialCandidates)
 	if s.config.SnapshotCache > 0 {
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler), s.snapDialCandidates)...)
@@ -491,9 +509,11 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 // Start implements node.Lifecycle, starting all internal goroutines needed by the
 // Ethereum protocol implementation.
 func (s *Ethereum) Start() error {
+	//启动enr记录更新
 	eth.StartENRUpdater(s.blockchain, s.p2pServer.LocalNode())
 
 	// Start the bloom bits servicing goroutines
+	//启动布隆过滤器查询服务
 	s.startBloomHandlers(params.BloomBitsBlocks)
 
 	// Regularly update shutdown marker
@@ -507,7 +527,9 @@ func (s *Ethereum) Start() error {
 		}
 		maxPeers -= s.config.LightPeers
 	}
+
 	// Start the networking layer and the light server if requested
+	//启动与peer之间的交易、区块的数据交换
 	s.handler.Start(maxPeers)
 	return nil
 }

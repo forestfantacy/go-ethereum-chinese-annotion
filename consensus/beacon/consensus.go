@@ -56,12 +56,14 @@ var (
 // The beacon here is a half-functional consensus engine with partial functions which
 // is only used for necessary consensus checks. The legacy consensus engine can be any
 // engine implements the consensus interface (except the beacon itself).
+// 信标共识引擎，合并了eth1共识和POS算法
 type Beacon struct {
 	ethone consensus.Engine // Original consensus engine used in eth1, e.g. ethash or clique
 }
 
 // New creates a consensus engine with the given embedded eth1 engine.
 func New(ethone consensus.Engine) *Beacon {
+	//非基础类型报错，防止嵌套
 	if _, ok := ethone.(*Beacon); ok {
 		panic("nested consensus engine")
 	}
@@ -73,6 +75,7 @@ func (beacon *Beacon) Author(header *types.Header) (common.Address, error) {
 	if !beacon.IsPoSHeader(header) {
 		return beacon.ethone.Author(header)
 	}
+	//POS区块头，直接取矿工地址
 	return header.Coinbase, nil
 }
 
@@ -83,15 +86,20 @@ func (beacon *Beacon) VerifyHeader(chain consensus.ChainHeaderReader, header *ty
 	if err != nil {
 		return err
 	}
+	//如果父区块没落库，走原始引擎验证块头
 	if !reached {
 		return beacon.ethone.VerifyHeader(chain, header, seal)
 	}
+
 	// Short circuit if the parent is not known
+	//验证父区块已落库
 	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
 	}
+
 	// Sanity checks passed, do a proper verification
+	//递归调用本方法：验证块头
 	return beacon.verifyHeader(chain, header, parent)
 }
 
@@ -345,6 +353,7 @@ func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.
 		// Convert amount from gwei to wei.
 		amount := new(big.Int).SetUint64(w.Amount)
 		amount = amount.Mul(amount, big.NewInt(params.GWei))
+		//把钱加回withdrawal中的地址
 		state.AddBalance(w.Address, amount)
 	}
 	// No block reward which is issued by consensus layer instead.
@@ -422,6 +431,7 @@ func (beacon *Beacon) Close() error {
 // IsPoSHeader reports the header belongs to the PoS-stage with some special fields.
 // This function is not suitable for a part of APIs like Prepare or CalcDifficulty
 // because the header difficulty is not set yet.
+// 区块头难度字段 == 0 即 POS 区块头
 func (beacon *Beacon) IsPoSHeader(header *types.Header) bool {
 	if header.Difficulty == nil {
 		panic("IsPoSHeader called with invalid difficulty")

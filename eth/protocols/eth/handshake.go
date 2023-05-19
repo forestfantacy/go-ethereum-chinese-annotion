@@ -51,13 +51,14 @@ func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 		})
 	}()
 	go func() {
+		//等待查询结果
 		errc <- p.readStatus(network, &status, genesis, forkFilter)
 	}()
 	timeout := time.NewTimer(handshakeTimeout)
 	defer timeout.Stop()
 	for i := 0; i < 2; i++ {
 		select {
-		case err := <-errc:
+		case err := <-errc: //协商失败退出流程，返回错误
 			if err != nil {
 				return err
 			}

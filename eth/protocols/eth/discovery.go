@@ -38,6 +38,7 @@ func (e enrEntry) ENRKey() string {
 
 // StartENRUpdater starts the `eth` ENR updater loop, which listens for chain
 // head events and updates the requested node record whenever a fork is passed.
+// 监听新区块事件，更新enr节点记录
 func StartENRUpdater(chain *core.BlockChain, ln *enode.LocalNode) {
 	var newHead = make(chan core.ChainHeadEvent, 10)
 	sub := chain.SubscribeChainHeadEvent(newHead)
@@ -46,7 +47,7 @@ func StartENRUpdater(chain *core.BlockChain, ln *enode.LocalNode) {
 		defer sub.Unsubscribe()
 		for {
 			select {
-			case <-newHead:
+			case <-newHead: //新区块
 				ln.Set(currentENREntry(chain))
 			case <-sub.Err():
 				// Would be nice to sync with Stop, but there is no
