@@ -150,6 +150,7 @@ type AncientStater interface {
 
 // Reader contains the methods required to read data from both key-value as well as
 // immutable ancient data.
+// 包含从键值和不可变的旧数据中读取数据所需的方法
 type Reader interface {
 	KeyValueReader
 	AncientReader
@@ -179,13 +180,14 @@ type AncientStore interface {
 
 // Database contains all the methods required by the high level database to not
 // only access the key-value data store but also the chain freezer.
+// 包含高层数据库所需的所有方法，不仅可以访问键值数据存储，还可以访问链的不变数据
 type Database interface {
-	Reader
-	Writer
-	Batcher
-	Iteratee
-	Stater
-	Compacter
-	Snapshotter
+	Reader      //读
+	Writer      //写
+	Batcher     //备份
+	Iteratee    //迭代
+	Stater      //统计
+	Compacter   //压缩
+	Snapshotter //快照
 	io.Closer
 }

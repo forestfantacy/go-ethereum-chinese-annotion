@@ -29,8 +29,11 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 )
 
+//跟状态树导入相关
+
 // DumpConfig is a set of options to control what portions of the state will be
 // iterated and collected.
+// 状态收集控制选项
 type DumpConfig struct {
 	SkipCode          bool
 	SkipStorage       bool
@@ -42,12 +45,15 @@ type DumpConfig struct {
 // DumpCollector interface which the state trie calls during iteration
 type DumpCollector interface {
 	// OnRoot is called with the state root
+	//迭代状态根时被调用
 	OnRoot(common.Hash)
 	// OnAccount is called once for each account in the trie
+	//迭代账户时被调用
 	OnAccount(common.Address, DumpAccount)
 }
 
 // DumpAccount represents an account in the state.
+// 转储账户的状态
 type DumpAccount struct {
 	Balance   string                 `json:"balance"`
 	Nonce     uint64                 `json:"nonce"`
@@ -57,7 +63,6 @@ type DumpAccount struct {
 	Storage   map[common.Hash]string `json:"storage,omitempty"`
 	Address   *common.Address        `json:"address,omitempty"` // Address only present in iterative (line-by-line) mode
 	SecureKey hexutil.Bytes          `json:"key,omitempty"`     // If we don't have address, we can output the key
-
 }
 
 // Dump represents the full dump in a collected format, as one large map.

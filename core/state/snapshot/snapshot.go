@@ -164,6 +164,9 @@ type Config struct {
 // The goal of a state snapshot is twofold: to allow direct access to account and
 // storage data to avoid expensive multi-level trie lookups; and to allow sorted,
 // cheap iteration of the account/storage tries for sync aid.
+// Tree是一个以太坊状态快照树。它由一个由键值存储支持的持久基础层组成，在其上有任意多个内存中的diff层。
+// 内存差异可以形成具有分支的树，但磁盘层是单一的，并且对所有层都是通用的。
+// 如果重组超出磁盘层，则需要删除所有内容。状态快照的目标有两个:允许直接访问帐户和存储数据，以避免昂贵的多级查找;并允许排序，便宜的迭代帐户/存储尝试同步援助。
 type Tree struct {
 	config Config                   // Snapshots configurations
 	diskdb ethdb.KeyValueStore      // Persistent database to store the snapshot

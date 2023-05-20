@@ -34,16 +34,22 @@ type node interface {
 }
 
 type (
+	//全节点（树枝节点）
 	fullNode struct {
+		//节点对应值=路径16和节点存储1
 		Children [17]node // Actual trie node data to encode/decode (needs custom encoder)
 		flags    nodeFlag
 	}
+	//短节点
 	shortNode struct {
-		Key   []byte
+		Key []byte
+
 		Val   node
 		flags nodeFlag
 	}
-	hashNode  []byte
+	//哈希节点
+	hashNode []byte
+	//值节点
 	valueNode []byte
 )
 

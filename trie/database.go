@@ -72,11 +72,16 @@ type childResolver interface {
 // thread safe in providing individual, independent node access. The rationale
 // behind this split design is to provide read access to RPC handlers and sync
 // servers even while the trie is executing expensive garbage collection.
+// 数据库是trie数据结构和磁盘数据库之间的中间写层。其目的是在内存中累积三次写操作，并且只定期将几次写操作刷新到磁盘，对其余操作进行垃圾收集。
+// 这种分割设计背后的基本原理是，即使在执行昂贵的垃圾收集时，也可以向RPC处理程序和同步服务器提供读访问。
 type Database struct {
-	diskdb   ethdb.Database // Persistent storage for matured trie nodes
-	resolver childResolver  // The handler to resolve children of nodes
+	//持久化存储
+	diskdb ethdb.Database // Persistent storage for matured trie nodes
+	//解析子节点
+	resolver childResolver // The handler to resolve children of nodes
 
-	cleans  *fastcache.Cache            // GC friendly memory cache of clean node RLPs
+	cleans *fastcache.Cache // GC friendly memory cache of clean node RLPs
+	//脏节点
 	dirties map[common.Hash]*cachedNode // Data and references relationships of dirty trie nodes
 	oldest  common.Hash                 // Oldest tracked node, flush-list head
 	newest  common.Hash                 // Newest tracked node, flush-list tail
@@ -131,6 +136,7 @@ type Config struct {
 // NewDatabase creates a new trie database to store ephemeral trie content before
 // its written out to disk or garbage collected. No read cache is created, so all
 // data retrievals will hit the underlying disk database.
+// NewDatabase创建一个新的trie数据库来存储短暂的trie内容，然后将其写入磁盘或垃圾收集。没有创建读缓存，因此所有数据检索都将访问底层磁盘数据库
 func NewDatabase(diskdb ethdb.Database) *Database {
 	return NewDatabaseWithConfig(diskdb, nil)
 }

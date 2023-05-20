@@ -37,30 +37,38 @@ const (
 )
 
 // Database wraps access to tries and contract code.
+// 访问trie树和合约代码的接口
 type Database interface {
 	// OpenTrie opens the main account trie.
+	//打开账户trie树
 	OpenTrie(root common.Hash) (Trie, error)
 
 	// OpenStorageTrie opens the storage trie of an account.
+	//打开指定账户的trie？
 	OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (Trie, error)
 
 	// CopyTrie returns an independent copy of the given trie.
 	CopyTrie(Trie) Trie
 
 	// ContractCode retrieves a particular contract's code.
+	//获得合约代码
 	ContractCode(addrHash, codeHash common.Hash) ([]byte, error)
 
 	// ContractCodeSize retrieves a particular contracts code's size.
+	//获得合约代码大小
 	ContractCodeSize(addrHash, codeHash common.Hash) (int, error)
 
 	// DiskDB returns the underlying key-value disk database.
+	//返回底层键值数据库
 	DiskDB() ethdb.KeyValueStore
 
 	// TrieDB retrieves the low level trie database used for data storage.
+	//用于数据存储的低级trie数据库
 	TrieDB() *trie.Database
 }
 
 // Trie is a Ethereum Merkle Patricia trie.
+// Merkle Patricia trie 接口
 type Trie interface {
 	// GetKey returns the sha3 preimage of a hashed key that was previously used
 	// to store a value.
@@ -79,6 +87,7 @@ type Trie interface {
 	// the trie, nil will be returned. If the trie is corrupted(e.g. some nodes
 	// are missing or the account blob is incorrect for decoding), an error will
 	// be returned.
+	//根据地址获取账户详情
 	GetAccount(address common.Address) (*types.StateAccount, error)
 
 	// UpdateStorage associates key with value in the trie. If value has length zero,
@@ -101,6 +110,7 @@ type Trie interface {
 
 	// Hash returns the root hash of the trie. It does not write to the database and
 	// can be used even if the trie doesn't have one.
+	//返回trie树的根哈希值
 	Hash() common.Hash
 
 	// Commit collects all dirty nodes in the trie and replace them with the
@@ -109,6 +119,8 @@ type Trie interface {
 	// The returned nodeset can be nil if the trie is clean(nothing to commit).
 	// Once the trie is committed, it's not usable anymore. A new trie must
 	// be created with new root and updated trie database for following usage
+	//Commit收集树中所有脏节点，并用对应的节点哈希值替换它们。所有收集到的节点(包括脏叶子，如果collectLeaf为true)将被封装到一个节点集中返回。
+	//如果树是干净的(没有要提交的)，返回的节点集可以是nil。一旦提交，它就不再可用了。为了下面的使用，必须使用新的根和更新的trie数据库创建一个新的树
 	Commit(collectLeaf bool) (common.Hash, *trie.NodeSet)
 
 	// NodeIterator returns an iterator that returns nodes of the trie. Iteration
@@ -122,6 +134,8 @@ type Trie interface {
 	// If the trie does not contain a value for key, the returned proof contains all
 	// nodes of the longest existing prefix of the key (at least the root), ending
 	// with the node that proves the absence of the key.
+	//Prove为key构造一个默克尔证明。结果包含到值at key的路径上的所有编码节点。值本身也包含在最后一个节点中，可以通过验证证明来检索。
+	//如果trie不包含key的值，则返回的证明包含该键存在的最长前缀的所有节点(至少是根节点)，以证明该键不存在的节点结束。
 	Prove(key []byte, fromLevel uint, proofDb ethdb.KeyValueWriter) error
 }
 

@@ -21,6 +21,7 @@ import (
 )
 
 // transientStorage is a representation of EIP-1153 "Transient Storage".
+// 瞬态存储
 type transientStorage map[common.Address]Storage
 
 // newTransientStorage creates a new instance of a transientStorage.

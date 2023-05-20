@@ -22,8 +22,11 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
+//关于状态树的修改和回滚
+
 // journalEntry is a modification entry in the state change journal that can be
 // reverted on demand.
+// 表示被修改的节点，具备回滚、查询被修改地址
 type journalEntry interface {
 	// revert undoes the changes introduced by this journal entry.
 	revert(*StateDB)
@@ -35,6 +38,7 @@ type journalEntry interface {
 // journal contains the list of state modifications applied since the last state
 // commit. These are tracked to be able to be reverted in the case of an execution
 // exception or request for reversal.
+// 自从上次状态提交之后，被修改的所有日志节点，以及被修改的地址对应的节点数量
 type journal struct {
 	entries []journalEntry         // Current changes tracked by the journal
 	dirties map[common.Address]int // Dirty accounts and the number of changes
@@ -84,6 +88,7 @@ func (j *journal) length() int {
 	return len(j.entries)
 }
 
+// journalEntry 实现类
 type (
 	// Changes to the account trie.
 	createObjectChange struct {

@@ -27,6 +27,7 @@ type Reader interface {
 	// Node retrieves the RLP-encoded trie node blob with the provided trie
 	// identifier, node path and the corresponding node hash. No error will
 	// be returned if the node is not found.
+	//根据trie标识符、节点路径和相应的节点哈希值查询rlp编码的trie节点blob
 	Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error)
 }
 
@@ -34,6 +35,7 @@ type Reader interface {
 type NodeReader interface {
 	// GetReader returns a reader for accessing all trie nodes with provided
 	// state root. Nil is returned in case the state is not available.
+	//根据状态根构建NodeReader，通过它可以访问所有的trie节点
 	GetReader(root common.Hash) Reader
 }
 
@@ -63,6 +65,7 @@ func newEmptyReader() *trieReader {
 // node retrieves the rlp-encoded trie node with the provided trie node
 // information. An MissingNodeError will be returned in case the node is
 // not found or any error is encountered.
+// 根据节点路径和相应的节点哈希值查询trie节点blob
 func (r *trieReader) node(path []byte, hash common.Hash) ([]byte, error) {
 	// Perform the logics in tests for preventing trie node access.
 	if r.banned != nil {

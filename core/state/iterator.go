@@ -28,11 +28,14 @@ import (
 
 // NodeIterator is an iterator to traverse the entire state trie post-order,
 // including all of the contract code and contract state tries.
+// 后序迭代器，遍历整个状态树以及所有的合约代码和合约状态
 type NodeIterator struct {
 	state *StateDB // State being iterated
 
+	//状态树
 	stateIt trie.NodeIterator // Primary iterator for the global state trie
-	dataIt  trie.NodeIterator // Secondary iterator for the data trie of a contract
+	//合约数据
+	dataIt trie.NodeIterator // Secondary iterator for the data trie of a contract
 
 	accountHash common.Hash // Hash of the node containing the account
 	codeHash    common.Hash // Hash of the contract source code

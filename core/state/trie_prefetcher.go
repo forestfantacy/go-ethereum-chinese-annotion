@@ -34,6 +34,7 @@ var (
 // into the caches as possible.
 //
 // Note, the prefetcher's API is not thread safe.
+// triieprefetcher是一个活动预取器，它接收帐户或存储项并尝试加载它们。目标是将尽可能多的有用内容放入缓存中。
 type triePrefetcher struct {
 	db       Database               // Database to fetch trie nodes through
 	root     common.Hash            // Root hash of the account trie for metrics
@@ -141,6 +142,7 @@ func (p *triePrefetcher) copy() *triePrefetcher {
 }
 
 // prefetch schedules a batch of trie items to prefetch.
+// 执行预抓取
 func (p *triePrefetcher) prefetch(owner common.Hash, root common.Hash, addr common.Address, keys [][]byte) {
 	// If the prefetcher is an inactive one, bail out
 	if p.fetches != nil {
@@ -158,6 +160,7 @@ func (p *triePrefetcher) prefetch(owner common.Hash, root common.Hash, addr comm
 
 // trie returns the trie matching the root hash, or nil if the prefetcher doesn't
 // have it.
+// 根据root抓取trie
 func (p *triePrefetcher) trie(owner common.Hash, root common.Hash) Trie {
 	// If the prefetcher is inactive, return from existing deep copies
 	id := p.trieID(owner, root)
@@ -204,6 +207,7 @@ func (p *triePrefetcher) trieID(owner common.Hash, root common.Hash) string {
 // single trie. It is spawned when a new root is encountered and lives until the
 // main prefetcher is paused and either all requested items are processed or if
 // the trie being worked on is retrieved from the prefetcher.
+// 拉取单个trie的拉取器
 type subfetcher struct {
 	db    Database       // Database to load trie nodes through
 	state common.Hash    // Root hash of the state to prefetch

@@ -37,7 +37,10 @@ func (c Code) String() string {
 	return string(c) //strings.Join(Disassemble(c), " ")
 }
 
-type Storage map[common.Hash]common.Hash
+type (
+	// Storage hash -> hash
+	Storage map[common.Hash]common.Hash
+)
 
 func (s Storage) String() (str string) {
 	for key, value := range s {
@@ -60,11 +63,19 @@ func (s Storage) Copy() Storage {
 // First you need to obtain a state object.
 // Account values can be accessed and modified through the object.
 // Finally, call commitTrie to write the modified storage trie into a database.
+// 代表一个正在被修改的以太坊账户
+// 使用模式如下:
+// 首先你需要获取一个状态对象。
+// 通过对象可以访问和修改帐户值。
+// 最后，调用commit将修改后的存储树写入数据库。
 type stateObject struct {
-	address  common.Address
+	//账户地址
+	address common.Address
+	//账户地址哈希
 	addrHash common.Hash // hash of ethereum address of the account
-	data     types.StateAccount
-	db       *StateDB
+	//被修改的状态账户
+	data types.StateAccount
+	db   *StateDB
 
 	// Write caches.
 	trie Trie // storage trie, which becomes non-nil on first access
@@ -263,6 +274,7 @@ func (s *stateObject) finalise(prefetch bool) {
 // updateTrie writes cached storage modifications into the object's storage trie.
 // It will return nil if the trie has not been loaded and no changes have been
 // made. An error will be returned if the trie can't be loaded/updated correctly.
+// updateTrie将缓存的存储修改写入对象的存储树。如果未加载且未进行任何更改，则返回nil 如果不能正确加载/更新树，将返回错误。
 func (s *stateObject) updateTrie(db Database) (Trie, error) {
 	// Make sure all dirty slots are finalized into the pending storage area
 	s.finalise(false) // Don't prefetch anymore, pull directly if need be
@@ -351,6 +363,7 @@ func (s *stateObject) updateRoot(db Database) {
 // commitTrie submits the storage changes into the storage trie and re-computes
 // the root. Besides, all trie changes will be collected in a nodeset and returned.
 func (s *stateObject) commitTrie(db Database) (*trie.NodeSet, error) {
+	//被修改的Trie，此时修改已落库
 	tr, err := s.updateTrie(db)
 	if err != nil {
 		return nil, err
@@ -363,6 +376,7 @@ func (s *stateObject) commitTrie(db Database) (*trie.NodeSet, error) {
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.db.StorageCommits += time.Since(start) }(time.Now())
 	}
+	//提交修改
 	root, nodes := tr.Commit(false)
 	s.data.Root = root
 	return nodes, nil

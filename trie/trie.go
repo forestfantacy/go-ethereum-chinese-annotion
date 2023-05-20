@@ -34,6 +34,8 @@ import (
 // based on the updated trie database.
 //
 // Trie is not safe for concurrent use.
+// 使用new方法新建MPT，它位于数据库的顶部。
+// 不论什么时候trie执行commit，生成的节点将被收集并以集合的形式返回，一旦提交，它就不再可用了。调用者必须使用基于更新的trie数据库的新根重新创建该trie。
 type Trie struct {
 	root  node
 	owner common.Hash
@@ -41,13 +43,16 @@ type Trie struct {
 	// Keep track of the number leaves which have been inserted since the last
 	// hashing operation. This number will not directly map to the number of
 	// actually unhashed nodes.
+	//跟踪自上次哈希操作以来插入的叶子数。这个数字不会直接映射到实际未散列节点的数量。
 	unhashed int
 
 	// reader is the handler trie can retrieve nodes from.
+	//用于从trie中读取节点
 	reader *trieReader
 
 	// tracer is the tool to track the trie changes.
 	// It will be reset after each commit operation.
+	//用于跟踪trie的变化，每次提交后将重置
 	tracer *tracer
 }
 
@@ -73,6 +78,9 @@ func (t *Trie) Copy() *Trie {
 // zero hash or the sha3 hash of an empty string, then trie is initially
 // empty, otherwise, the root node must be present in database or returns
 // a MissingNodeError if not.
+// New使用提供的trie id和只读数据库创建trie实例。
+// 由trieid指定的状态必须是可用的，否则将返回错误。
+// 由trieid指定的树根可以是零散列或空字符串的sha3散列，则trie初始为空，否则，根节点必须存在于数据库中，否则返回MissingNodeError。
 func New(id *ID, db NodeReader) (*Trie, error) {
 	reader, err := newTrieReader(id.StateRoot, id.Owner, db)
 	if err != nil {
@@ -83,11 +91,15 @@ func New(id *ID, db NodeReader) (*Trie, error) {
 		reader: reader,
 		tracer: newTracer(),
 	}
+	//如果根不是零散列，
 	if id.Root != (common.Hash{}) && id.Root != types.EmptyRootHash {
+		//根据root hash从底层数据库中加载根节点
 		rootnode, err := trie.resolveAndTrack(id.Root[:], nil)
+		//根节点未找到报错，所以root hash在db中要提前存在
 		if err != nil {
 			return nil, err
 		}
+		//新trie树根
 		trie.root = rootnode
 	}
 	return trie, nil
@@ -101,6 +113,7 @@ func NewEmpty(db *Database) *Trie {
 
 // NodeIterator returns an iterator that returns nodes of the trie. Iteration starts at
 // the key after the given start key.
+// 从start位置开始迭代树节点
 func (t *Trie) NodeIterator(start []byte) NodeIterator {
 	return newNodeIterator(t, start)
 }
@@ -166,6 +179,7 @@ func (t *Trie) get(origNode node, key []byte, pos int) (value []byte, newnode no
 
 // MustGetNode is a wrapper of GetNode and will omit any encountered error but
 // just print out an error message.
+// 返回item
 func (t *Trie) MustGetNode(path []byte) ([]byte, int) {
 	item, resolved, err := t.GetNode(path)
 	if err != nil {
@@ -179,6 +193,7 @@ func (t *Trie) MustGetNode(path []byte) ([]byte, int) {
 //
 // If the requested node is not present in trie, no error will be returned.
 // If the trie is corrupted, a MissingNodeError is returned.
+// 返回item resolved error
 func (t *Trie) GetNode(path []byte) ([]byte, int, error) {
 	item, newroot, resolved, err := t.getNode(t.root, compactToHex(path), 0)
 	if err != nil {
@@ -193,6 +208,8 @@ func (t *Trie) GetNode(path []byte) ([]byte, int, error) {
 	return item, resolved, nil
 }
 
+// 输入：原始节点，压缩路径，位置
+// 输出：
 func (t *Trie) getNode(origNode node, path []byte, pos int) (item []byte, newnode node, resolved int, err error) {
 	// If non-existent path requested, abort
 	if origNode == nil {
@@ -203,6 +220,7 @@ func (t *Trie) getNode(origNode node, path []byte, pos int) (item []byte, newnod
 		// Although we most probably have the original node expanded, encoding
 		// that into consensus form can be nasty (needs to cascade down) and
 		// time consuming. Instead, just pull the hash up from disk directly.
+		//虽然我们很可能已经扩展了原始节点，但把它编码为共识形式可能会很麻烦(需要向下级联)并且很耗时。不如直接从磁盘提取散列。
 		var hash hashNode
 		if node, ok := origNode.(hashNode); ok {
 			hash = node
@@ -216,7 +234,9 @@ func (t *Trie) getNode(origNode node, path []byte, pos int) (item []byte, newnod
 		return blob, origNode, 1, err
 	}
 	// Path still needs to be traversed, descend into children
+	//根据类型向下遍历
 	switch n := (origNode).(type) {
+	//原始节点为值节点，path不合格
 	case valueNode:
 		// Path prematurely ended, abort
 		return nil, nil, 0, nil
@@ -548,6 +568,8 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 // and path prefix and also tracks the loaded node blob in tracer treated as the
 // node's original value. The rlp-encoded blob is preferred to be loaded from
 // database because it's easy to decode node while complex to encode node to blob.
+// resolveAndTrack使用给定的节点哈希值和路径前缀从底层存储加载节点，并在跟踪器中跟踪加载的节点blob，将其视为节点的原始值。
+// rlp编码的blob最好从数据库中加载，因为对节点进行解码比较容易，而将节点编码为blob比较复杂
 func (t *Trie) resolveAndTrack(n hashNode, prefix []byte) (node, error) {
 	blob, err := t.reader.node(prefix, common.BytesToHash(n))
 	if err != nil {

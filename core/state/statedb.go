@@ -15,6 +15,7 @@
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package state provides a caching layer atop the Ethereum state trie.
+// 在以太坊状态树之上提供了一个缓存层
 package state
 
 import (
@@ -57,16 +58,22 @@ func (n *proofList) Delete(key []byte) error {
 // nested states. It's the general query interface to retrieve:
 // * Contracts
 // * Accounts
+// 以太坊协议中的StateDB结构用于存储任何东西
+// 在默克尔树中。statedb负责缓存和存储 嵌套状态。这是检索的通用查询接口:
 type StateDB struct {
-	db         Database
+	//访问trie树和合约代码
+	db Database
+	//预抓取
 	prefetcher *triePrefetcher
 	trie       Trie
 	hasher     crypto.KeccakState
 
 	// originalRoot is the pre-state root, before any changes were made.
 	// It will be updated when the Commit is called.
+	//originalRoot是任何更改之前的预状态根。当Commit被调用时，它将被更新
 	originalRoot common.Hash
 
+	//快照相关
 	snaps        *snapshot.Tree
 	snap         snapshot.Snapshot
 	snapAccounts map[common.Hash][]byte
@@ -88,6 +95,7 @@ type StateDB struct {
 	dbErr error
 
 	// The refund counter, also used by state transitioning.
+	//退款账户
 	refund uint64
 
 	thash   common.Hash
@@ -105,6 +113,7 @@ type StateDB struct {
 
 	// Journal of state modifications. This is the backbone of
 	// Snapshot and RevertToSnapshot.
+	//回滚相关
 	journal        *journal
 	validRevisions []revision
 	nextRevisionId int
@@ -131,6 +140,7 @@ type StateDB struct {
 
 // New creates a new state from a given trie.
 func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) {
+	//打开账户trie树
 	tr, err := db.OpenTrie(root)
 	if err != nil {
 		return nil, err

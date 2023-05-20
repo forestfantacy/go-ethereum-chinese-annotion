@@ -26,6 +26,7 @@ import (
 
 // StateAccount is the Ethereum consensus representation of accounts.
 // These objects are stored in the main account trie.
+// 以太坊账户的共识状态表示，这些对象存储在主帐户树中
 type StateAccount struct {
 	//已执行交易总数，用来标示该账户发出的交易数量；
 	Nonce uint64

@@ -19,10 +19,14 @@ package trie
 import "github.com/ethereum/go-ethereum/common"
 
 // ID is the identifier for uniquely identifying a trie.
+// trie唯一标识：树根，状态根是解决属于哪个块么？Owner是指属于哪个合约？我认为只要树根就可以了
 type ID struct {
+	//对应的状态根
 	StateRoot common.Hash // The root of the corresponding state(block.root)
-	Owner     common.Hash // The contract address hash which the trie belongs to
-	Root      common.Hash // The root hash of trie
+	//当前trie所属的合约地址哈希
+	Owner common.Hash // The contract address hash which the trie belongs to
+	//当前trie的根哈希
+	Root common.Hash // The root hash of trie
 }
 
 // StateTrieID constructs an identifier for state trie with the provided state root.
@@ -46,6 +50,7 @@ func StorageTrieID(stateRoot common.Hash, owner common.Hash, root common.Hash) *
 
 // TrieID constructs an identifier for a standard trie(not a second-layer trie)
 // with provided root. It's mostly used in tests and some other tries like CHT trie.
+// 指定根构造标识符（标准trie树，非第2层树）
 func TrieID(root common.Hash) *ID {
 	return &ID{
 		StateRoot: root,
