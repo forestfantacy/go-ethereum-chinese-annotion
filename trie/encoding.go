@@ -33,7 +33,10 @@ package trie
 // of the first byte is zero in the case of an even number of nibbles and the first nibble
 // in the case of an odd number. All remaining nibbles (now an even number) fit properly
 // into the remaining bytes. Compact encoding is used for nodes stored on disk.
-
+// 用三种不同的编码处理Trie键:
+// KEYBYTES 原始值
+// HEX encoding 用于加载在内存中的节点
+// COMPACT encoding 用于存储到磁盘
 func hexToCompact(hex []byte) []byte {
 	terminator := byte(0)
 	if hasTerm(hex) {

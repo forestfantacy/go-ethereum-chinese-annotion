@@ -44,6 +44,7 @@ func init() {
 }
 
 func TestEmptyTrie(t *testing.T) {
+	//database 中间层 --》 eth.database 底层
 	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
 	res := trie.Hash()
 	exp := types.EmptyRootHash

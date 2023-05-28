@@ -91,7 +91,7 @@ func New(id *ID, db NodeReader) (*Trie, error) {
 		reader: reader,
 		tracer: newTracer(),
 	}
-	//如果根不是零散列，
+	//如果树的ID标识指向的根节点不是kong哈希值
 	if id.Root != (common.Hash{}) && id.Root != types.EmptyRootHash {
 		//根据root hash从底层数据库中加载根节点
 		rootnode, err := trie.resolveAndTrack(id.Root[:], nil)
@@ -99,7 +99,7 @@ func New(id *ID, db NodeReader) (*Trie, error) {
 		if err != nil {
 			return nil, err
 		}
-		//新trie树根
+		//库中trie树根挂在trie.root
 		trie.root = rootnode
 	}
 	return trie, nil
@@ -291,20 +291,25 @@ func (t *Trie) MustUpdate(key, value []byte) {
 //
 // If the requested node is not present in trie, no error will be returned.
 // If the trie is corrupted, a MissingNodeError is returned.
+// 更新key对应的value，如果value空，删除key
 func (t *Trie) Update(key, value []byte) error {
 	return t.update(key, value)
 }
 
 func (t *Trie) update(key, value []byte) error {
 	t.unhashed++
+	//hex编码key
 	k := keybytesToHex(key)
 	if len(value) != 0 {
+		//返回插入后根节点
 		_, n, err := t.insert(t.root, nil, k, valueNode(value))
 		if err != nil {
 			return err
 		}
+		//更新trie树的根节点
 		t.root = n
 	} else {
+		//从trie中删掉key
 		_, n, err := t.delete(t.root, nil, k)
 		if err != nil {
 			return err
@@ -315,36 +320,56 @@ func (t *Trie) update(key, value []byte) error {
 }
 
 func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error) {
+	//key4Debug := string(hexToKeybytes(key)[:])
+	//fmt.Printf("key=%s,value=%s\n", key4Debug, value)
+
+	//key为空，do nothing ，直接返回value
 	if len(key) == 0 {
 		if v, ok := n.(valueNode); ok {
 			return !bytes.Equal(v, value.(valueNode)), value, nil
 		}
 		return true, value, nil
 	}
+	//判断挂载点的类型
 	switch n := n.(type) {
 	case *shortNode:
+		//得到插入的key与挂载点的key的公共前缀
 		matchlen := prefixLen(key, n.Key)
 		// If the whole key matches, keep this short node as is
 		// and only update the value.
+		//如果插入key完全包含挂载点key do dogglesworth，直接更新挂载点下
 		if matchlen == len(n.Key) {
+			//在n的子节点(n.val)下插入，而不是在n下插入，也就是说已经存在以n为前缀的子节点，那就在这个子节点执行插入逻辑
+			//insert(n的子节点（前缀do的全节点）， do， glesworth  cat）
 			dirty, nn, err := t.insert(n.Val, append(prefix, key[:matchlen]...), key[matchlen:], value)
 			if !dirty || err != nil {
 				return false, n, err
 			}
+			//新建短节点为根，用它指向nn
 			return true, &shortNode{n.Key, nn, t.newFlag()}, nil
 		}
+
 		// Otherwise branch out at the index where they differ.
+		//新建一个全节点f，2个短节点a和b，ab的key分别为二者原来key的差异部分,f的children下标为差异开始的那个字节
+
 		branch := &fullNode{flags: t.newFlag()}
 		var err error
+		//t.insert 第1个参数nil，那么结果一定返回一个短节点
+		//新建短接点a（prefix=原节点公共前缀,key=原节点后半段，val=原节点val）
+		//n.Key[matchlen]，n.Key公共前缀后的第1个字节，也就是设abc abcdef，应该找出d
 		_, branch.Children[n.Key[matchlen]], err = t.insert(nil, append(prefix, n.Key[:matchlen+1]...), n.Key[matchlen+1:], n.Val)
 		if err != nil {
 			return false, nil, err
 		}
+		//新建短接点b（prefix=新插入key公共前缀,key=新插入key后半段，val=新插入val）
+		//n.Key[matchlen]，key公共前缀后的第1个字节
 		_, branch.Children[key[matchlen]], err = t.insert(nil, append(prefix, key[:matchlen+1]...), key[matchlen+1:], value)
 		if err != nil {
 			return false, nil, err
 		}
+
 		// Replace this shortNode with the branch if it occurs at index 0.
+		//如果在第一位则直接用branch为根，也就是二者没有公共前缀
 		if matchlen == 0 {
 			return true, branch, nil
 		}
@@ -354,15 +379,19 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 		t.tracer.onInsert(append(prefix, key[:matchlen]...))
 
 		// Replace it with a short node leading up to the branch.
+		//新建短节点（key=公共前缀，val=branch）为根
 		return true, &shortNode{key[:matchlen], branch, t.newFlag()}, nil
 
 	case *fullNode:
+		//key[0]=g，n.Children[key[0]]表示g指向的短节点，
+		//insert(g指向的节点（短节点）， dog， glesworth  cat）
 		dirty, nn, err := t.insert(n.Children[key[0]], append(prefix, key[0]), key[1:], value)
 		if !dirty || err != nil {
 			return false, n, err
 		}
 		n = n.copy()
 		n.flags = t.newFlag()
+		//指向新建的子节点nn，此时整个key都已经没有公共前缀了，直接取key第1个字节作为子节点索引
 		n.Children[key[0]] = nn
 		return true, n, nil
 
@@ -371,17 +400,22 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 		// passed is the path from the root node. Note the valueNode won't be tracked
 		// since it's always embedded in its parent.
 		t.tracer.onInsert(prefix)
-
+		//新建短节点 指定key value
 		return true, &shortNode{key, value, t.newFlag()}, nil
 
 	case hashNode:
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the node and insert into it. This leaves all child nodes on
 		// the path to the value in the trie.
+		//我们碰到了树中尚未加载的部分。负载并插入节点。这使得所有子节点都位于到该树中值的路径上。
+		//根据节点哈希值和路径前缀从底层存储加载节点
+		//所以如果n是hashnode，表示n不在当前树中，也就是说trie树默认不存数据，用时从磁盘或db中加载
 		rn, err := t.resolveAndTrack(n, prefix)
+		//没找到报错
 		if err != nil {
 			return false, nil, err
 		}
+		//当前节点rn加载完毕，递归插入key value
 		dirty, nn, err := t.insert(rn, prefix, key, value)
 		if !dirty || err != nil {
 			return false, rn, err
@@ -419,25 +453,30 @@ func (t *Trie) Delete(key []byte) error {
 // delete returns the new root of the trie with key deleted.
 // It reduces the trie to minimal form by simplifying
 // nodes on the way up after deleting recursively.
+// 返回已删除key对应节点的trie树的根
 func (t *Trie) delete(n node, prefix, key []byte) (bool, node, error) {
 	switch n := n.(type) {
 	case *shortNode:
 		matchlen := prefixLen(key, n.Key)
+		//要删除的key不包含挂载点的key，直接返回。例如：n.key=abc  key=abdfe
 		if matchlen < len(n.Key) {
 			return false, n, nil // don't replace n on mismatch
 		}
+		//如果要删除的key正好跟挂载点key，说明要删除的是n
 		if matchlen == len(key) {
 			// The matched short node is deleted entirely and track
 			// it in the deletion set. The same the valueNode doesn't
 			// need to be tracked at all since it's always embedded.
 			t.tracer.onDelete(prefix)
 
+			//返回nil会让n被删除
 			return true, nil, nil // remove n entirely for whole matches
 		}
 		// The key is longer than n.Key. Remove the remaining suffix
 		// from the subtrie. Child can never be nil here since the
 		// subtrie must contain at least two other values with keys
 		// longer than n.Key.
+		//键比n键长。从子条目中删除剩余的后缀。Child在这里永远不能为nil，因为子树必须包含至少两个键长度大于n.Key的其他值。
 		dirty, child, err := t.delete(n.Val, append(prefix, key[:len(n.Key)]...), key[len(n.Key):])
 		if !dirty || err != nil {
 			return false, n, err
@@ -454,6 +493,7 @@ func (t *Trie) delete(n node, prefix, key []byte) (bool, node, error) {
 			// always creates a new slice) instead of append to
 			// avoid modifying n.Key since it might be shared with
 			// other nodes.
+			//从子树中删除将其减少到另一个短节点。合并节点以避免创建shortNode{…, shortNode{…}}。使用concat(它总是创建一个新切片)而不是append来避免修改n.k key，因为它可能与其他节点共享。
 			return true, &shortNode{concat(n.Key, child.Key...), child.Val, t.newFlag()}, nil
 		default:
 			return true, &shortNode{n.Key, child, t.newFlag()}, nil
@@ -581,7 +621,10 @@ func (t *Trie) resolveAndTrack(n hashNode, prefix []byte) (node, error) {
 
 // Hash returns the root hash of the trie. It does not write to the
 // database and can be used even if the trie doesn't have one.
+// /返回树的根哈希值。它不会写入数据库，即使没有，也可以使用。
 func (t *Trie) Hash() common.Hash {
+	//hash： t.root的hashcode
+	//cached： t.root
 	hash, cached := t.hashRoot()
 	t.root = cached
 	return common.BytesToHash(hash.(hashNode))
@@ -622,16 +665,22 @@ func (t *Trie) Commit(collectLeaf bool) (common.Hash, *NodeSet) {
 }
 
 // hashRoot calculates the root hash of the given trie
+// 计算给定树的根哈希值
 func (t *Trie) hashRoot() (node, node) {
+	//根节点为空，返回常量EmptyRootHash
 	if t.root == nil {
 		return hashNode(types.EmptyRootHash.Bytes()), nil
 	}
 	// If the number of changes is below 100, we let one thread handle it
+	//构建Hasher，如果更改的数量>=100，多线程处理
 	h := newHasher(t.unhashed >= 100)
 	defer func() {
+		//池化Hasher
 		returnHasherToPool(h)
 		t.unhashed = 0
 	}()
+
+	//计算t.root的merkle根
 	hashed, cached := h.hash(t.root, true)
 	return hashed, cached
 }

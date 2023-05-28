@@ -28,6 +28,7 @@ import (
 var indices = []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "[17]"}
 
 type node interface {
+	//当前节点的缓存：返回根据当前节点计算而来的hashNode，是否缓存
 	cache() (hashNode, bool)
 	encode(w rlp.EncoderBuffer)
 	fstring(string) string
@@ -40,16 +41,16 @@ type (
 		Children [17]node // Actual trie node data to encode/decode (needs custom encoder)
 		flags    nodeFlag
 	}
-	//短节点
+	//短节点（只有1个子节点）
 	shortNode struct {
-		Key []byte
+		Key []byte //路径
 
-		Val   node
-		flags nodeFlag
+		Val   node     //指向下一个节点
+		flags nodeFlag //存储通过当前节点计算而来的hashNode
 	}
-	//哈希节点
+	//哈希节点（叶子节点，通过计算别的节点的hash得到）
 	hashNode []byte
-	//值节点
+	//值节点（原始数据的节点）
 	valueNode []byte
 )
 
