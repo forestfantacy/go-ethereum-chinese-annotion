@@ -34,7 +34,20 @@ import (
 // based on the updated trie database.
 //
 // Trie is not safe for concurrent use.
-// 使用new方法新建MPT，它位于数据库的顶部。
+
+// Trie 表示字典树：由key转换成path，找到叶子节点上的val
+
+// Merkle Trie 默克尔树：叶子节点存数据，分支节点存哈希值，由hash(子树哈希)而来。最实用的两个场景：
+// 1.快速比较两份大数据是否相等，可以从根节点上就直接判断出两份数据是否相同（哪怕一个子数据不同，根节点的哈希值都不同）
+// 2.可以做 “Merkle证明”，即在仅通过下载部分数据，而不是整棵树，就能快速判断某数据是否存在，以及其应处的位置是否正确
+
+// Merkle Patricia Trie，MPT树，融合了merkle树和字典树的数据结构
+// 高效的数据结构，插入、删除、查询操作的复杂度是log(N)，通过优化字典数实现而来，并且具备将节点持久化到硬盘的功能
+// 同时具备merkle树的快速真伪鉴定和存在性检查的功能，通过将每个节点转换成hash，并将节点hash维护成merkle树
+
+// 可以存储键值对 (key-value pair) 的高效数据结构，键、值分别可以是任意的序列化过的字符串
+
+// Trie 使用new方法新建MPT，它位于数据库的顶部。
 // 不论什么时候trie执行commit，生成的节点将被收集并以集合的形式返回，一旦提交，它就不再可用了。调用者必须使用基于更新的trie数据库的新根重新创建该trie。
 type Trie struct {
 	root  node
@@ -78,7 +91,7 @@ func (t *Trie) Copy() *Trie {
 // zero hash or the sha3 hash of an empty string, then trie is initially
 // empty, otherwise, the root node must be present in database or returns
 // a MissingNodeError if not.
-// New使用提供的trie id和只读数据库创建trie实例。
+// 创建trie，需要提供trie id和只读数据库
 // 由trieid指定的状态必须是可用的，否则将返回错误。
 // 由trieid指定的树根可以是零散列或空字符串的sha3散列，则trie初始为空，否则，根节点必须存在于数据库中，否则返回MissingNodeError。
 func New(id *ID, db NodeReader) (*Trie, error) {
@@ -134,6 +147,7 @@ func (t *Trie) MustGet(key []byte) []byte {
 // If the requested node is not present in trie, no error will be returned.
 // If the trie is corrupted, a MissingNodeError is returned.
 func (t *Trie) Get(key []byte) ([]byte, error) {
+	//在root底下找key
 	value, newroot, didResolve, err := t.get(t.root, keybytesToHex(key), 0)
 	if err == nil && didResolve {
 		t.root = newroot
@@ -152,6 +166,7 @@ func (t *Trie) get(origNode node, key []byte, pos int) (value []byte, newnode no
 			// key not found in trie
 			return nil, n, false, nil
 		}
+		//递归查找
 		value, newnode, didResolve, err = t.get(n.Val, key, pos+len(n.Key))
 		if err == nil && didResolve {
 			n = n.copy()
@@ -159,6 +174,7 @@ func (t *Trie) get(origNode node, key []byte, pos int) (value []byte, newnode no
 		}
 		return value, n, didResolve, err
 	case *fullNode:
+		//递归
 		value, newnode, didResolve, err = t.get(n.Children[key[pos]], key, pos+1)
 		if err == nil && didResolve {
 			n = n.copy()
@@ -166,10 +182,12 @@ func (t *Trie) get(origNode node, key []byte, pos int) (value []byte, newnode no
 		}
 		return value, n, didResolve, err
 	case hashNode:
+		//加载n到内存
 		child, err := t.resolveAndTrack(n, key[:pos])
 		if err != nil {
 			return nil, n, true, err
 		}
+		//递归
 		value, newnode, _, err := t.get(child, key, pos)
 		return value, newnode, true, err
 	default:
@@ -611,11 +629,13 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 // resolveAndTrack使用给定的节点哈希值和路径前缀从底层存储加载节点，并在跟踪器中跟踪加载的节点blob，将其视为节点的原始值。
 // rlp编码的blob最好从数据库中加载，因为对节点进行解码比较容易，而将节点编码为blob比较复杂
 func (t *Trie) resolveAndTrack(n hashNode, prefix []byte) (node, error) {
+	//从底层存储查询
 	blob, err := t.reader.node(prefix, common.BytesToHash(n))
 	if err != nil {
 		return nil, err
 	}
 	t.tracer.onRead(prefix, blob)
+	//解码得到node
 	return mustDecodeNode(n, blob), nil
 }
 
@@ -636,9 +656,13 @@ func (t *Trie) Hash() common.Hash {
 // The returned nodeset can be nil if the trie is clean (nothing to commit).
 // Once the trie is committed, it's not usable anymore. A new trie must
 // be created with new root and updated trie database for following usage
+// Commit收集树中的所有脏节点，并用相应的节点哈希替换它们。所有收集到的节点(包括脏叶子，如果collectLeaf为true)将被封装到一个节点集中返回。
+// 如果树是干净的(没有要提交的)，返回的节点集可以是nil。一旦提交，它就不再可用了。
+// 为了后续使用，必须使用新根创建一个新树和更新trie数据库
 func (t *Trie) Commit(collectLeaf bool) (common.Hash, *NodeSet) {
 	defer t.tracer.reset()
 
+	//所有被替换的脏节点
 	nodes := NewNodeSet(t.owner)
 	t.tracer.markDeletions(nodes)
 
@@ -650,17 +674,21 @@ func (t *Trie) Commit(collectLeaf bool) (common.Hash, *NodeSet) {
 	}
 	// Derive the hash for all dirty nodes first. We hold the assumption
 	// in the following procedure that all nodes are hashed.
+	//首先算一次merkle树，产生旧节点被修改
 	rootHash := t.Hash()
 
 	// Do a quick check if we really need to commit. This can happen e.g.
 	// if we load a trie for reading storage values, but don't write to it.
+	//快速检查是不是真需要执行提交，因为当前trie只读不写
 	if hashedNode, dirty := t.root.cache(); !dirty {
 		// Replace the root node with the origin hash in order to
 		// ensure all resolved nodes are dropped after the commit.
 		t.root = hashedNode
 		return rootHash, nil
 	}
+	//收集被修改过的node放入c.nodes，返回并更新trie树的根节点
 	t.root = newCommitter(nodes, t.tracer, collectLeaf).Commit(t.root)
+	//返回根节点hash和被修改的节点集
 	return rootHash, nodes
 }
 

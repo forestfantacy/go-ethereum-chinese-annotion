@@ -25,6 +25,7 @@ import (
 )
 
 // preimageStore is the store for caching preimages of node key.
+// 节点键缓存层
 type preimageStore struct {
 	lock          sync.RWMutex
 	disk          ethdb.KeyValueStore
@@ -58,6 +59,7 @@ func (store *preimageStore) insertPreimage(preimages map[common.Hash][]byte) {
 
 // preimage retrieves a cached trie node pre-image from memory. If it cannot be
 // found cached, the method queries the persistent database for the content.
+// 从内存中找缓存的trie节点预映像。如果在缓存中找不到内容，该方法将查询持久数据库以获取内容。
 func (store *preimageStore) preimage(hash common.Hash) []byte {
 	store.lock.RLock()
 	preimage := store.preimages[hash]

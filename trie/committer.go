@@ -32,6 +32,7 @@ type leaf struct {
 // committer is the tool used for the trie Commit operation. The committer will
 // capture all dirty nodes during the commit process and keep them cached in
 // insertion order.
+// 捕获所有脏节点，并按插入顺序缓存它们。
 type committer struct {
 	nodes       *NodeSet
 	tracer      *tracer
@@ -67,22 +68,25 @@ func (c *committer) commit(path []byte, n node) node {
 
 		// If the child is fullNode, recursively commit,
 		// otherwise it can only be hashNode or valueNode.
+		//子节点是全节点则递归调用c.commit
 		if _, ok := cn.Val.(*fullNode); ok {
 			collapsed.Val = c.commit(append(path, cn.Key...), cn.Val)
 		}
 		// The key needs to be copied, since we're adding it to the
 		// modified nodeset.
 		collapsed.Key = hexToCompact(cn.Key)
+		//将collapsed添加到已修改数据集
 		hashedNode := c.store(path, collapsed)
 		if hn, ok := hashedNode.(hashNode); ok {
 			return hn
 		}
 		return collapsed
 	case *fullNode:
+		//递归提交
 		hashedKids := c.commitChildren(path, cn)
 		collapsed := cn.copy()
 		collapsed.Children = hashedKids
-
+		//添加到已修改数据集
 		hashedNode := c.store(path, collapsed)
 		if hn, ok := hashedNode.(hashNode); ok {
 			return hn
@@ -125,6 +129,7 @@ func (c *committer) commitChildren(path []byte, n *fullNode) [17]node {
 
 // store hashes the node n and adds it to the modified nodeset. If leaf collection
 // is enabled, leaf nodes will be tracked in the modified nodeset as well.
+// 对n计算哈希并构造新节点，然后将其添加到修改后的节点集c.nodes。如果启用了叶节点收集，则也跟踪叶节点。
 func (c *committer) store(path []byte, n node) node {
 	// Larger nodes are replaced by their hash and stored in the database.
 	var hash, _ = n.cache()

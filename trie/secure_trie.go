@@ -41,11 +41,13 @@ func NewSecure(stateRoot common.Hash, owner common.Hash, root common.Hash, db *D
 // access operations hash the key using keccak256. This prevents
 // calling code from creating long chains of nodes that
 // increase the access time.
-//
+//用键哈希封装一个trie。在stateTrie树中，所有访问操作都使用keccak256对键进行散列。这可以防止调用代码创建增加访问时间的长节点链。
+
 // Contrary to a regular trie, a StateTrie can only be created with
 // New and must have an attached database. The database also stores
 // the preimage of each key if preimage recording is enabled.
-//
+//与常规的trie相反，StateTrie只能用New创建，并且必须附带一个数据库。如果启用了预映像记录，数据库还存储每个键的预映像。
+
 // StateTrie is not safe for concurrent use.
 type StateTrie struct {
 	trie             Trie

@@ -33,6 +33,8 @@ import (
 // If the trie does not contain a value for key, the returned proof contains all
 // nodes of the longest existing prefix of the key (at least the root node), ending
 // with the node that proves the absence of the key.
+// key的merkle证明，结果包含到达key的路径上所有的节点编码，且应该包含key的value
+// 如果不包含value，证明当前trie没有这个key
 func (t *Trie) Prove(key []byte, fromLevel uint, proofDb ethdb.KeyValueWriter) error {
 	// Collect all nodes on the path to key.
 	var (
@@ -114,6 +116,7 @@ func (t *StateTrie) Prove(key []byte, fromLevel uint, proofDb ethdb.KeyValueWrit
 // VerifyProof checks merkle proofs. The given proof must contain the value for
 // key in a trie with the given root hash. VerifyProof returns an error if the
 // proof contains invalid trie nodes or the wrong value.
+// 检查默克尔证明。给定的证明必须包含具有给定rootHash的树中的key值。如果证明包含无效的trie节点或错误的值，则VerifyProof返回错误。
 func VerifyProof(rootHash common.Hash, key []byte, proofDb ethdb.KeyValueReader) (value []byte, err error) {
 	key = keybytesToHex(key)
 	wantHash := rootHash
@@ -145,6 +148,7 @@ func VerifyProof(rootHash common.Hash, key []byte, proofDb ethdb.KeyValueReader)
 // necessary nodes will be resolved and leave the remaining as hashnode.
 //
 // The given edge proof is allowed to be an existent or non-existent proof.
+// proofToPath将默克尔证明转换为树节点路径。此函数的主要目的是从默克尔证明流中恢复节点路径。将解析所有必要的节点，并将剩余的节点保留为hashnode。
 func proofToPath(rootHash common.Hash, root node, key []byte, proofDb ethdb.KeyValueReader, allowNonExistent bool) (node, []byte, error) {
 	// resolveNode retrieves and resolves trie node from merkle proof stream
 	resolveNode := func(hash common.Hash) (node, error) {

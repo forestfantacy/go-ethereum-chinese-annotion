@@ -241,6 +241,10 @@ func TestEmptyValues(t *testing.T) {
 	for _, val := range vals {
 		updateString(trie, val.k, val.v)
 	}
+	value, err := trie.Get([]byte("ether"))
+	if err != nil || value != nil {
+		t.Errorf("expected %x got %x", err, value)
+	}
 
 	hash := trie.Hash()
 	exp := common.HexToHash("5991bb8c6514148a29db676a14ac506cd2cd5775ace63c30a4fe457715e9ac84")
@@ -268,10 +272,12 @@ func TestReplication(t *testing.T) {
 	triedb.Update(NewWithNodeSet(nodes))
 
 	// create a new trie on top of the database and check that lookups work.
+	//exp是提交后的新的merkle根，用它构建一个新trie
 	trie2, err := New(TrieID(exp), triedb)
 	if err != nil {
 		t.Fatalf("can't recreate trie at %x: %v", exp, err)
 	}
+	//提交后，原来的数据应该还在
 	for _, kv := range vals {
 		if string(getString(trie2, kv.k)) != kv.v {
 			t.Errorf("trie2 doesn't have %q => %q", kv.k, kv.v)

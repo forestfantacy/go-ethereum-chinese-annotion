@@ -39,6 +39,7 @@ var stPool = sync.Pool{
 
 // NodeWriteFunc is used to provide all information of a dirty node for committing
 // so that callers can flush nodes into database with desired scheme.
+// 将脏节点落盘入库
 type NodeWriteFunc = func(owner common.Hash, path []byte, hash common.Hash, blob []byte)
 
 func stackTrieFromPool(writeFn NodeWriteFunc, owner common.Hash) *StackTrie {
@@ -56,13 +57,15 @@ func returnToPool(st *StackTrie) {
 // StackTrie is a trie implementation that expects keys to be inserted
 // in order. Once it determines that a subtree will no longer be inserted
 // into, it will hash it and free up the memory it uses.
+// 一个trie实现，它期望键按顺序插入。一旦它确定将不再插入子树，它将对其进行散列并释放它使用的内存。
+// StackTrie 只是一种字典树，不具备merkle树的性质。也就是实现了log(N)的增改查，具备将节点持久化到硬盘，索引为节点hash
 type StackTrie struct {
-	owner    common.Hash    // the owner of the trie
-	nodeType uint8          // node type (as in branch, ext, leaf)
-	val      []byte         // value contained by this node if it's a leaf
+	owner    common.Hash    // 所有者the owner of the trie
+	nodeType uint8          // 当前节点的类型 node type (as in branch, ext, leaf)
+	val      []byte         // 只有叶子节点才有val value contained by this node if it's a leaf
 	key      []byte         // key chunk covered by this (leaf|ext) node
-	children [16]*StackTrie // list of children (for branch and exts)
-	writeFn  NodeWriteFunc  // function for committing nodes, can be nil
+	children [16]*StackTrie // 当前节点的子节点（子树）list of children (for branch and exts)
+	writeFn  NodeWriteFunc  // 将脏节点落盘入库 function for committing nodes, can be nil
 }
 
 // NewStackTrie allocates and initializes an empty trie.
@@ -508,8 +511,12 @@ func (st *StackTrie) Hash() (h common.Hash) {
 // of the trie nodes MAY have been committed already. The main purpose
 // here is to commit the root node.
 //
+//如果还没有哈希，Commit将首先对整个树进行哈希，然后将所有节点提交到关联的数据库。实际上，大多数tree节点可能已经提交了。这里的主要目的是提交根节点。
+
 // The associated database is expected, otherwise the whole commit
 // functionality should be disabled.
+// 需要关联的数据库，否则整个提交功能将被禁用
+
 func (st *StackTrie) Commit() (h common.Hash, err error) {
 	if st.writeFn == nil {
 		return common.Hash{}, ErrCommitDisabled

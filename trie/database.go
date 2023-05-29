@@ -255,6 +255,7 @@ func (db *Database) Nodes() []common.Hash {
 // This function is used to add reference between internal trie node
 // and external node(e.g. storage trie root), all internal trie nodes
 // are referenced together by database itself.
+// 向子节点添加从父节点的新引用。该函数用于在内部节点和外部节点之间添加引用(例如:存储树根)，所有内部树节点由数据库本身一起引用
 func (db *Database) Reference(child common.Hash, parent common.Hash) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -592,6 +593,7 @@ func (c *cleaner) Delete(key []byte) error {
 
 // Update inserts the dirty nodes in provided nodeset into database and
 // link the account trie with multiple storage tries if necessary.
+// 将MergedNodeSet中的节点插入数据库，并链接帐户树和存储树
 func (db *Database) Update(nodes *MergedNodeSet) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -612,6 +614,7 @@ func (db *Database) Update(nodes *MergedNodeSet) error {
 	if _, ok := nodes.sets[common.Hash{}]; ok {
 		order = append(order, common.Hash{})
 	}
+	//找自己的order，然后将相关的node插入db
 	for _, owner := range order {
 		subset := nodes.sets[owner]
 		subset.forEachWithOrder(func(path string, n *trienode.Node) {
@@ -623,6 +626,7 @@ func (db *Database) Update(nodes *MergedNodeSet) error {
 	}
 	// Link up the account trie and storage trie if the node points
 	// to an account trie leaf.
+	//如果节点指向一个帐户树叶子，则链接帐户树和存储树。
 	if set, present := nodes.sets[common.Hash{}]; present {
 		for _, n := range set.leaves {
 			var account types.StateAccount
@@ -630,6 +634,7 @@ func (db *Database) Update(nodes *MergedNodeSet) error {
 				return err
 			}
 			if account.Root != types.EmptyRootHash {
+				//修改数据库
 				db.reference(account.Root, n.parent)
 			}
 		}

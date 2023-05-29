@@ -65,7 +65,7 @@ func newEmptyReader() *trieReader {
 // node retrieves the rlp-encoded trie node with the provided trie node
 // information. An MissingNodeError will be returned in case the node is
 // not found or any error is encountered.
-// 根据节点路径和相应的节点哈希值查询trie节点blob
+// 根据节点路径和相应的节点哈希值从底层存储中查询trie节点blob
 func (r *trieReader) node(path []byte, hash common.Hash) ([]byte, error) {
 	// Perform the logics in tests for preventing trie node access.
 	if r.banned != nil {
@@ -76,6 +76,7 @@ func (r *trieReader) node(path []byte, hash common.Hash) ([]byte, error) {
 	if r.reader == nil {
 		return nil, &MissingNodeError{Owner: r.owner, NodeHash: hash, Path: path}
 	}
+	//从db中读取
 	blob, err := r.reader.Node(r.owner, path, hash)
 	if err != nil || len(blob) == 0 {
 		return nil, &MissingNodeError{Owner: r.owner, NodeHash: hash, Path: path, err: err}
