@@ -106,6 +106,7 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 	evm.Reset(txContext, statedb)
 
 	// Apply the transaction to the current state (included in the env).
+	//将事务应用到当前状态(包含在环境中)
 	result, err := ApplyMessage(evm, msg, gp)
 	if err != nil {
 		return nil, err
@@ -114,15 +115,20 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 	// Update the state with pending changes.
 	var root []byte
 	if config.IsByzantium(blockNumber) {
+		//执行预结束动作，没提交更改
 		statedb.Finalise(true)
 	} else {
+		//执行更新，返回最新树根哈希
 		root = statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
 	}
+	//累加本次交易消耗的gas费
 	*usedGas += result.UsedGas
 
 	// Create a new receipt for the transaction, storing the intermediate root and gas used
 	// by the tx.
+	//为交易创建一个新的收据，存储tx使用的中间根和气体
 	receipt := &types.Receipt{Type: tx.Type(), PostState: root, CumulativeGasUsed: *usedGas}
+	//字段初始化
 	if result.Failed() {
 		receipt.Status = types.ReceiptStatusFailed
 	} else {
@@ -132,11 +138,13 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 	receipt.GasUsed = result.UsedGas
 
 	// If the transaction created a contract, store the creation address in the receipt.
+	//如果交易创建了合约，则将创建地址存储在收据中。
 	if msg.To == nil {
 		receipt.ContractAddress = crypto.CreateAddress(evm.TxContext.Origin, tx.Nonce())
 	}
 
 	// Set the receipt logs and create the bloom filter.
+	//交易日志存在statedb的内存里，没在db
 	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash)
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 	receipt.BlockHash = blockHash
@@ -149,13 +157,16 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 // and uses the input parameters for its environment. It returns the receipt
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
+// 尝试将事务应用到给定的状态数据库，并使用其环境的输入参数。它返回交易的收据、使用的gas，如果交易失败则返回一个错误，表明该区块无效。
 func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, error) {
 	msg, err := TransactionToMessage(tx, types.MakeSigner(config, header.Number, header.Time), header.BaseFee)
 	if err != nil {
 		return nil, err
 	}
 	// Create a new context to be used in the EVM environment
+	//创建要在EVM环境中使用的新上下文
 	blockContext := NewEVMBlockContext(header, bc, author)
 	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, config, cfg)
+	//执行交易，返回交易收据
 	return applyTransaction(msg, config, gp, statedb, header.Number, header.Hash(), tx, usedGas, vmenv)
 }

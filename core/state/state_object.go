@@ -78,12 +78,12 @@ type stateObject struct {
 	db   *StateDB
 
 	// Write caches.
-	trie Trie // storage trie, which becomes non-nil on first access
+	trie Trie // 状态账户关联的存储树 storage trie, which becomes non-nil on first access
 	code Code // contract bytecode, which gets set when code is loaded
 
-	originStorage  Storage // Storage cache of original entries to dedup rewrites, reset for every transaction
-	pendingStorage Storage // Storage entries that need to be flushed to disk, at the end of an entire block
-	dirtyStorage   Storage // Storage entries that have been modified in the current transaction execution
+	originStorage  Storage // 原始条目缓存，每事务重置 Storage cache of original entries to dedup rewrites, reset for every transaction
+	pendingStorage Storage // 在整个块的末尾需要刷新到磁盘的存储项 Storage entries that need to be flushed to disk, at the end of an entire block
+	dirtyStorage   Storage // 在当前事务执行中被修改的存储项 Storage entries that have been modified in the current transaction execution
 
 	// Cache flags.
 	// When an object is marked suicided it will be deleted from the trie
@@ -143,6 +143,7 @@ func (s *stateObject) touch() {
 // getTrie returns the associated storage trie. The trie will be opened
 // if it's not loaded previously. An error will be returned if trie can't
 // be loaded.
+// 返回关联的存储树。如果之前没有加载，则将打开该尝试。如果无法加载，将返回一个错误
 func (s *stateObject) getTrie(db Database) (Trie, error) {
 	if s.trie == nil {
 		// Try fetching from prefetcher first
@@ -274,7 +275,7 @@ func (s *stateObject) finalise(prefetch bool) {
 // updateTrie writes cached storage modifications into the object's storage trie.
 // It will return nil if the trie has not been loaded and no changes have been
 // made. An error will be returned if the trie can't be loaded/updated correctly.
-// updateTrie将缓存的存储修改写入对象的存储树。如果未加载且未进行任何更改，则返回nil 如果不能正确加载/更新树，将返回错误。
+// 将缓存的存储修改写入对象的存储树。如果未加载且未进行任何更改，则返回nil 如果不能正确加载/更新树，将返回错误。
 func (s *stateObject) updateTrie(db Database) (Trie, error) {
 	// Make sure all dirty slots are finalized into the pending storage area
 	s.finalise(false) // Don't prefetch anymore, pull directly if need be
@@ -290,22 +291,29 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 		storage map[common.Hash][]byte
 		hasher  = s.db.hasher
 	)
+
+	//获取状态账户的存储树MPT
 	tr, err := s.getTrie(db)
 	if err != nil {
 		s.db.setError(err)
 		return nil, err
 	}
-	// Insert all the pending updates into the trie
+
+	// 将所有的更新插入到存储树MPT Insert all the pending updates into the trie
 	usedStorage := make([][]byte, 0, len(s.pendingStorage))
+	//遍历所有的待更新
 	for key, value := range s.pendingStorage {
 		// Skip noop changes, persist actual changes
+		//待更新的值与原始值相同
 		if value == s.originStorage[key] {
 			continue
 		}
+		//修改内存中的原始值为最新值
 		s.originStorage[key] = value
 
 		var v []byte
 		if (value == common.Hash{}) {
+			//删除空值节点
 			if err := tr.DeleteStorage(s.address, key[:]); err != nil {
 				s.db.setError(err)
 				return nil, err
@@ -314,6 +322,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 		} else {
 			// Encoding []byte cannot fail, ok to ignore the error.
 			v, _ = rlp.EncodeToBytes(common.TrimLeftZeroes(value[:]))
+			//插入非空值节点
 			if err := tr.UpdateStorage(s.address, key[:], v); err != nil {
 				s.db.setError(err)
 				return nil, err
@@ -321,6 +330,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 			s.db.StorageUpdated += 1
 		}
 		// If state snapshotting is active, cache the data til commit
+		//快照：缓存最新值直到执行commit
 		if s.db.snap != nil {
 			if storage == nil {
 				// Retrieve the old storage map, if available, create a new one otherwise
@@ -329,10 +339,12 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 					s.db.snapStorage[s.addrHash] = storage
 				}
 			}
+			//将key和value最新值存起来
 			storage[crypto.HashData(hasher, key[:])] = v // v will be nil if it's deleted
 		}
 		usedStorage = append(usedStorage, common.CopyBytes(key[:])) // Copy needed for closure
 	}
+	//资源清理
 	if s.db.prefetcher != nil {
 		s.db.prefetcher.used(s.addrHash, s.data.Root, usedStorage)
 	}
@@ -344,6 +356,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 
 // UpdateRoot sets the trie root to the current root hash of. An error
 // will be returned if trie root hash is not computed correctly.
+// 执行写入，并更新当前stateObject引用最新的存储树
 func (s *stateObject) updateRoot(db Database) {
 	tr, err := s.updateTrie(db)
 	if err != nil {
@@ -357,6 +370,7 @@ func (s *stateObject) updateRoot(db Database) {
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.db.StorageHashes += time.Since(start) }(time.Now())
 	}
+	//最新的存储树
 	s.data.Root = tr.Hash()
 }
 

@@ -169,7 +169,7 @@ func ecrecover(header *types.Header, sigcache *sigLRU) (common.Address, error) {
 
 // Clique is the proof-of-authority consensus engine proposed to support the
 // Ethereum testnet following the Ropsten attacks.
-// proof-of-authority共识引擎，通过质押才能取得身份？
+// 在Ropsten攻击后为支持以太坊测试网而提出的权威证明共识引擎（ proof-of-authority）
 type Clique struct {
 	config *params.CliqueConfig // Consensus engine configuration parameters
 	db     ethdb.Database       // Database to store and retrieve snapshot checkpoints

@@ -26,14 +26,14 @@ import (
 
 // StateAccount is the Ethereum consensus representation of accounts.
 // These objects are stored in the main account trie.
-// 以太坊账户的共识状态表示，这些对象存储在主帐户树中
+// 状态账户：以太坊账户共识状态表示，这些对象存储在主帐户树中
 type StateAccount struct {
 	//已执行交易总数，用来标示该账户发出的交易数量；
 	Nonce uint64
 	//持币数量，记录用户的以太币余额；
 	Balance *big.Int
-	//存储区的哈希值，指向智能合约账户的存储数据区；
+	//存储树的根哈希（智能合约账户专有），随着合约的存储区的增加、删除、改动而不断变更
 	Root common.Hash // merkle root of the storage trie
-	//代码区的哈希值，指向智能合约账户存储的智能合约代码。
+	//代码区的哈希值（智能合约账户专有）
 	CodeHash []byte
 }

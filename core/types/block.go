@@ -69,17 +69,17 @@ type Header struct {
 	UncleHash common.Hash `json:"sha3Uncles"       gencodec:"required"`
 	//挖掘该块的矿工账户地址
 	Coinbase common.Address `json:"miner"`
-	//状态树的根hash
+	//状态树，所有状态是持久化在KV数据库中的，存储形式为MPT，通过Root和账户地址能找到对应的StateAccount
 	Root common.Hash `json:"stateRoot"        gencodec:"required"`
-	//交易树的根hash
+	//交易树，通过Root和账户地址能找到对应的Transaction
 	TxHash common.Hash `json:"transactionsRoot" gencodec:"required"`
-	//收据树根hash
+	//收据树，通过Root和账户地址能找到对应的Receipt
 	ReceiptHash common.Hash `json:"receiptsRoot"     gencodec:"required"`
 	//日志索引集合
 	Bloom      Bloom    `json:"logsBloom"        gencodec:"required"`
 	Difficulty *big.Int `json:"difficulty"       gencodec:"required"`
 	Number     *big.Int `json:"number"           gencodec:"required"`
-	//当前块允许包容的最大 gas 值
+	//当前块允许消耗的最大 gas 值
 	GasLimit uint64 `json:"gasLimit"         gencodec:"required"`
 	GasUsed  uint64 `json:"gasUsed"          gencodec:"required"`
 	//出块时间
@@ -223,24 +223,30 @@ func NewBlock(header *Header, txs []*Transaction, uncles []*Header, receipts []*
 	if len(txs) == 0 {
 		b.header.TxHash = EmptyTxsHash
 	} else {
+		//交易树根哈希
 		b.header.TxHash = DeriveSha(Transactions(txs), hasher)
 		b.transactions = make(Transactions, len(txs))
+		//更新交易列表
 		copy(b.transactions, txs)
 	}
 
 	if len(receipts) == 0 {
 		b.header.ReceiptHash = EmptyReceiptsHash
 	} else {
+		//收据树根哈希
 		b.header.ReceiptHash = DeriveSha(Receipts(receipts), hasher)
+		//收据日志索引
 		b.header.Bloom = CreateBloom(receipts)
 	}
 
 	if len(uncles) == 0 {
 		b.header.UncleHash = EmptyUncleHash
 	} else {
+		//计算叔块hash
 		b.header.UncleHash = CalcUncleHash(uncles)
 		b.uncles = make([]*Header, len(uncles))
 		for i := range uncles {
+			//拷贝叔块
 			b.uncles[i] = CopyHeader(uncles[i])
 		}
 	}

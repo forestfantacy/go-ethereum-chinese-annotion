@@ -45,6 +45,7 @@ type Backend interface {
 
 // Config is the configuration parameters of mining.
 type Config struct {
+	//挖矿奖励地址 跟coinbase啥区别
 	Etherbase  common.Address `toml:",omitempty"` // Public address for block mining rewards
 	Notify     []string       `toml:",omitempty"` // HTTP URL list to be notified of new work packages (only useful in ethash).
 	NotifyFull bool           `toml:",omitempty"` // Notify with pending block headers instead of work packages
@@ -72,6 +73,7 @@ var DefaultConfig = Config{
 }
 
 // Miner creates blocks and searches for proof-of-work values.
+//控制器角色，所有的工作是由worker完成的
 type Miner struct {
 	mux     *event.TypeMux
 	eth     Backend

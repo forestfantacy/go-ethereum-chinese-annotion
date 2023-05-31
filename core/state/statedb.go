@@ -80,10 +80,11 @@ type StateDB struct {
 	snapStorage  map[common.Hash]map[common.Hash][]byte
 
 	// This map holds 'live' objects, which will get modified while processing a state transition.
+	//在处理交易过程中，已经被修改，且存活的状态对象
 	stateObjects         map[common.Address]*stateObject
-	stateObjectsPending  map[common.Address]struct{} // State objects finalized but not yet written to the trie
-	stateObjectsDirty    map[common.Address]struct{} // State objects modified in the current execution
-	stateObjectsDestruct map[common.Address]struct{} // State objects destructed in the block
+	stateObjectsPending  map[common.Address]struct{} // 经历了finalized，但还没写入trie的状态对象 State objects finalized but not yet written to the trie
+	stateObjectsDirty    map[common.Address]struct{} // 当前执行阶段已经被修改的状态对象 State objects modified in the current execution
+	stateObjectsDestruct map[common.Address]struct{} // 被销毁的状态对象  State objects destructed in the block
 
 	// DB error.
 	// State objects are used by the consensus core and VM which are
@@ -95,11 +96,12 @@ type StateDB struct {
 	dbErr error
 
 	// The refund counter, also used by state transitioning.
-	//退款账户
+	//退款计数器
 	refund uint64
 
 	thash   common.Hash
 	txIndex int
+	//交易日志 txhash -> []log
 	logs    map[common.Hash][]*types.Log
 	logSize uint
 
@@ -216,6 +218,7 @@ func (s *StateDB) AddLog(log *types.Log) {
 
 // GetLogs returns the logs matching the specified transaction hash, and annotates
 // them with the given blockNumber and blockHash.
+// 返回与指定事务哈希值匹配的日志，并使用给定的blockNumber和blockHash注释它们。
 func (s *StateDB) GetLogs(hash common.Hash, blockNumber uint64, blockHash common.Hash) []*types.Log {
 	logs := s.logs[hash]
 	for _, l := range logs {
@@ -841,6 +844,7 @@ func (s *StateDB) GetRefund() uint64 {
 // Finalise finalises the state by removing the destructed objects and clears
 // the journal as well as the refunds. Finalise, however, will not push any updates
 // into the tries just yet. Only IntermediateRoot or Commit will do that.
+// 结束阶段：清除销毁的对象，清除日志、退款。然而，finalize目前还不会推送更改到状态trie。只有IntermediateRoot或Commit会这样做。
 func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 	addressesToPrefetch := make([][]byte, 0, len(s.journal.dirties))
 	for addr := range s.journal.dirties {
@@ -890,17 +894,21 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 // IntermediateRoot computes the current root hash of the state trie.
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
+// 计算状态树的当前根哈希值。它在事务之间被调用，以获得进入事务收据的根哈希。
 func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// Finalise all the dirty storage states and write them into the tries
+	//处理脏存储状态并将它们写入trie
 	s.Finalise(deleteEmptyObjects)
 
 	// If there was a trie prefetcher operating, it gets aborted and irrevocably
 	// modified after we start retrieving tries. Remove it from the statedb after
 	// this round of use.
+	// 在我们开始查询trie树之后，如果当时有trie的预取器正在执行，预取器将会终止运行，并且已经执行的修改将无法撤销，要到这轮查询结束后才会删除
 	//
 	// This is weird pre-byzantium since the first tx runs with a prefetcher and
 	// the remainder without, but pre-byzantium even the initial prefetcher is
 	// useless, so no sleep lost.
+	// 这是奇怪的pre-byzum，因为第一个tx运行时带预取器，其余的没有，但pre-byzum甚至初始预取器是无用的，所以没有睡眠损失。
 	prefetcher := s.prefetcher
 	if s.prefetcher != nil {
 		defer func() {
@@ -913,6 +921,8 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// the account prefetcher. Instead, let's process all the storage updates
 	// first, giving the account prefetches just a few more milliseconds of time
 	// to pull useful data from disk.
+	//虽然简单地说，查询帐户树，然后按顺序进行合约存储和帐户更新是有意义的，但这会使帐户预取器短路。相反，让我们先处理所有存储更新，给帐户预取多几毫秒的时间从磁盘提取有用的数据。
+	//先处理更新
 	for addr := range s.stateObjectsPending {
 		if obj := s.stateObjects[addr]; !obj.deleted {
 			obj.updateRoot(s.db)
@@ -921,12 +931,14 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// Now we're about to start to write changes to the trie. The trie is so far
 	// _untouched_. We can check with the prefetcher, if it can give us a trie
 	// which has the same root, but also has some content loaded into it.
+	//现在，我们要开始写入更改到trie。这棵树到目前为止还没有被人动过。我们可以用预取器检查，它是否能给我们一个有相同根的树，但也加载了一些内容。
 	if prefetcher != nil {
 		if trie := prefetcher.trie(common.Hash{}, s.originalRoot); trie != nil {
 			s.trie = trie
 		}
 	}
 	usedAddrs := make([][]byte, 0, len(s.stateObjectsPending))
+	//写入更改到trie
 	for addr := range s.stateObjectsPending {
 		if obj := s.stateObjects[addr]; obj.deleted {
 			s.deleteStateObject(obj)
@@ -937,6 +949,7 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 		}
 		usedAddrs = append(usedAddrs, common.CopyBytes(addr[:])) // Copy needed for closure
 	}
+	//回收资源
 	if prefetcher != nil {
 		prefetcher.used(common.Hash{}, s.originalRoot, usedAddrs)
 	}
@@ -947,12 +960,14 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.AccountHashes += time.Since(start) }(time.Now())
 	}
+	//返回最新的树根哈希
 	return s.trie.Hash()
 }
 
 // SetTxContext sets the current transaction hash and index which are
 // used when the EVM emits new state logs. It should be invoked before
 // transaction execution.
+// 设置当前事务哈希值和索引，当EVM发出新的状态日志时使用。它应该在事务执行之前调用。
 func (s *StateDB) SetTxContext(thash common.Hash, ti int) {
 	s.thash = thash
 	s.txIndex = ti

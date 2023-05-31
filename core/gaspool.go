@@ -23,6 +23,7 @@ import (
 
 // GasPool tracks the amount of gas available during execution of the transactions
 // in a block. The zero value is a pool with zero gas available.
+// 跟踪块中事务执行期间可用的gas量。零值是一个没有可用gas的池。
 type GasPool uint64
 
 // AddGas makes gas available for execution.

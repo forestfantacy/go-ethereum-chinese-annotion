@@ -47,12 +47,13 @@ type ChainHeaderReader interface {
 	GetHeaderByHash(hash common.Hash) *types.Header
 
 	// GetTd retrieves the total difficulty from the database by hash and number.
+	//total difficulty 干啥用的？
 	GetTd(hash common.Hash, number uint64) *big.Int
 }
 
 // ChainReader defines a small collection of methods needed to access the local
 // blockchain during header and/or uncle verification.
-// 区块链读取区块接口：根据hash或区块编号读取
+// 区块链读取区块接口：根据hash或区块编号读取，在验证header或uncle时用到
 type ChainReader interface {
 	ChainHeaderReader
 
@@ -61,73 +62,80 @@ type ChainReader interface {
 }
 
 // Engine is an algorithm agnostic consensus engine.
+// 一个算法不可知的共识引擎
 type Engine interface {
 	// Author retrieves the Ethereum address of the account that minted the given
 	// block, which may be different from the header's coinbase if a consensus
 	// engine is based on signatures.
-	//查询区块的矿工地址
+	//给定区块的挖矿帐户的以太坊地址，如果共识引擎基于签名，则该地址可能与区块头的coinbase不同，why？
 	Author(header *types.Header) (common.Address, error)
 
 	// VerifyHeader checks whether a header conforms to the consensus rules of a
 	// given engine. Verifying the seal may be done optionally here, or explicitly
 	// via the VerifySeal method.
-	//验证区块头
+	//检查区块头是否符合给定引擎的共识规则。验证密封可以在这里选择性地完成，也可以通过VerifySeal方法显式地完成。
 	VerifyHeader(chain ChainHeaderReader, header *types.Header, seal bool) error
 
 	// VerifyHeaders is similar to VerifyHeader, but verifies a batch of headers
 	// concurrently. The method returns a quit channel to abort the operations and
 	// a results channel to retrieve the async verifications (the order is that of
 	// the input slice).
-	//验证一组区块头
+	//VerifyHeaders类似于VerifyHeader，但同时验证一批报头。该方法返回一个退出通道以中止操作，并返回一个结果通道以查询验证结果(顺序与输入片相同)。
 	VerifyHeaders(chain ChainHeaderReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error)
 
 	// VerifyUncles verifies that the given block's uncles conform to the consensus
 	// rules of a given engine.
-	//验证叔块
+	//验证给定块的叔块是否符合给定引擎的共识规则。
 	VerifyUncles(chain ChainReader, block *types.Block) error
 
 	// Prepare initializes the consensus fields of a block header according to the
 	// rules of a particular engine. The changes are executed inline.
-	//初始化区块头的一致性字段
+	//根据特定引擎的规则初始化块区块头的共识字段
 	Prepare(chain ChainHeaderReader, header *types.Header) error
 
 	// Finalize runs any post-transaction state modifications (e.g. block rewards
 	// or process withdrawals) but does not assemble the block.
-	//
-	// Note: The state database might be updated to reflect any consensus rules
+	// 修改交易后状态(例如块奖励或进程退出)，但不组装块。
+
+	// Finalize Note: The state database might be updated to reflect any consensus rules
 	// that happen at finalization (e.g. block rewards).
+	// 注意:状态数据库可能会被更新，以反映在最终化时发生的所有共识规则(例如块奖励)。
 	Finalize(chain ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction,
 		uncles []*types.Header, withdrawals []*types.Withdrawal)
 
 	// FinalizeAndAssemble runs any post-transaction state modifications (e.g. block
 	// rewards or process withdrawals) and assembles the final block.
-	//
-	// Note: The block header and state database might be updated to reflect any
+	// 修改交易后状态(例如块奖励或进程退出)并完成组装区块
+
+	// FinalizeAndAssemble Note: The block header and state database might be updated to reflect any
 	// consensus rules that happen at finalization (e.g. block rewards).
+	//注意:区块头和状态数据库可能会被更新，以反映在最终化时发生的所有共识规则(例如区块奖励)。
 	FinalizeAndAssemble(chain ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction,
 		uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, error)
 
 	// Seal generates a new sealing request for the given input block and pushes
 	// the result into the given channel.
-	//
+	// Seal为给定的输入块生成一个新的密封请求，并将结果推入给定的通道。
 	// Note, the method returns immediately and will send the result async. More
 	// than one result may also be returned depending on the consensus algorithm.
-	//生成block的密封请求，并将推送到管道
+	// 注意，该方法立即返回，并将异步发送结果。根据一致性算法，也可能返回多个结果
 	Seal(chain ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error
 
 	// SealHash returns the hash of a block prior to it being sealed.
-	//密封之前的hash
+	//密封之前的区块hash
 	SealHash(header *types.Header) common.Hash
 
 	// CalcDifficulty is the difficulty adjustment algorithm. It returns the difficulty
 	// that a new block should have.
-	//计算新区块的难度
+	//难度调整算法。它返回一个新块应该具有的难度。
 	CalcDifficulty(chain ChainHeaderReader, time uint64, parent *types.Header) *big.Int
 
 	// APIs returns the RPC APIs this consensus engine provides.
+	//共识引擎提供的RPC api。
 	APIs(chain ChainHeaderReader) []rpc.API
 
 	// Close terminates any background threads maintained by the consensus engine.
+	//Close终止所有由共识引擎维护的后台线程。
 	Close() error
 }
 

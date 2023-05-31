@@ -49,13 +49,14 @@ const (
 )
 
 // Receipt represents the results of a transaction.
+// 代表一个交易结果所包含的信息：交易哈希，交易状态，所用gas和单价，执行过程中的日志，所在区块的信息
 type Receipt struct {
 	// Consensus fields: These fields are defined by the Yellow Paper
 	Type uint8 `json:"type,omitempty"`
-	//交易后的状态
+	//交易后的状态树的根哈希
 	PostState []byte `json:"root"`
 	Status    uint64 `json:"status"`
-	//交易真实发生的gas
+	//交易当时被处理时的累计消耗值（区块口径）
 	CumulativeGasUsed uint64 `json:"cumulativeGasUsed" gencodec:"required"`
 	//用于快速查询交易，日志的索引结构
 	Bloom Bloom `json:"logsBloom"         gencodec:"required"`
@@ -63,6 +64,8 @@ type Receipt struct {
 	Logs []*Log `json:"logs"              gencodec:"required"`
 
 	// Implementation fields: These fields are added by geth when processing a transaction.
+	//geth在处理交易过程中加入的字段
+	//交易标识
 	TxHash            common.Hash    `json:"transactionHash" gencodec:"required"`
 	ContractAddress   common.Address `json:"contractAddress"`
 	GasUsed           uint64         `json:"gasUsed" gencodec:"required"`
