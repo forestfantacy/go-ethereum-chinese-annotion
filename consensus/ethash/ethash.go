@@ -323,6 +323,7 @@ func newDataset(epoch uint64) *dataset {
 }
 
 // generate ensures that the dataset content is generated before use.
+// 确保数据集内容在使用前生成。
 func (d *dataset) generate(dir string, limit int, lock bool, test bool) {
 	d.once.Do(func() {
 		// Mark the dataset generated after we're done. This is needed for remote
@@ -389,6 +390,7 @@ func (d *dataset) generate(dir string, limit int, lock bool, test bool) {
 // generated returns whether this particular dataset finished generating already
 // or not (it may not have been started at all). This is useful for remote miners
 // to default to verification caches instead of blocking on DAG generations.
+// 返回这个特定的数据集是否已经完成生成(它可能根本没有开始)。这对于远程矿工默认使用验证缓存而不是阻塞DAG代非常有用。
 func (d *dataset) generated() bool {
 	return d.done.Load()
 }
@@ -581,6 +583,7 @@ func (ethash *Ethash) StopRemoteSealer() error {
 // cache tries to retrieve a verification cache for the specified block number
 // by first checking against a list of in-memory caches, then against caches
 // stored on disk, and finally generating one if none can be found.
+// 尝试检索指定块号的验证缓存，首先检查内存缓存列表，然后检查存储在磁盘上的缓存，如果没有找到，最后生成一个验证缓存。
 func (ethash *Ethash) cache(block uint64) *cache {
 	epoch := block / epochLength
 	current, future := ethash.caches.get(epoch)
@@ -598,9 +601,11 @@ func (ethash *Ethash) cache(block uint64) *cache {
 // dataset tries to retrieve a mining dataset for the specified block number
 // by first checking against a list of in-memory datasets, then against DAGs
 // stored on disk, and finally generating one if none can be found.
-//
+// dataset尝试检索指定块号的挖掘数据集，首先检查内存中的数据集列表，然后检查存储在磁盘上的dag，如果没有找到，最后生成一个
+
 // If async is specified, not only the future but the current DAG is also
 // generates on a background thread.
+// 如果指定async，不仅将来的DAG，而且当前的DAG也会在后台线程上生成。
 func (ethash *Ethash) dataset(block uint64, async bool) *dataset {
 	// Retrieve the requested ethash dataset
 	epoch := block / epochLength

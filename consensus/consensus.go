@@ -73,14 +73,14 @@ type Engine interface {
 	// VerifyHeader checks whether a header conforms to the consensus rules of a
 	// given engine. Verifying the seal may be done optionally here, or explicitly
 	// via the VerifySeal method.
-	//检查区块头是否符合给定引擎的共识规则。验证密封可以在这里选择性地完成，也可以通过VerifySeal方法显式地完成。
+	//检查区块头是否符合给定引擎的共识规则。验证密封seal 控制密封操作是否在本方法中完成，也可以通过VerifySeal方法显式地完成。
 	VerifyHeader(chain ChainHeaderReader, header *types.Header, seal bool) error
 
 	// VerifyHeaders is similar to VerifyHeader, but verifies a batch of headers
 	// concurrently. The method returns a quit channel to abort the operations and
 	// a results channel to retrieve the async verifications (the order is that of
 	// the input slice).
-	//VerifyHeaders类似于VerifyHeader，但同时验证一批报头。该方法返回一个退出通道以中止操作，并返回一个结果通道以查询验证结果(顺序与输入片相同)。
+	//VerifyHeaders类似于VerifyHeader，但同时验证一批区块头。该方法返回一个退出通道以中止操作，并返回一个结果通道以查询验证结果(顺序与输入片相同)。
 	VerifyHeaders(chain ChainHeaderReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error)
 
 	// VerifyUncles verifies that the given block's uncles conform to the consensus
@@ -127,7 +127,7 @@ type Engine interface {
 
 	// CalcDifficulty is the difficulty adjustment algorithm. It returns the difficulty
 	// that a new block should have.
-	//难度调整算法。它返回一个新块应该具有的难度。
+	//难度调整算法。根据父块计算新块应该具有的难度。
 	CalcDifficulty(chain ChainHeaderReader, time uint64, parent *types.Header) *big.Int
 
 	// APIs returns the RPC APIs this consensus engine provides.

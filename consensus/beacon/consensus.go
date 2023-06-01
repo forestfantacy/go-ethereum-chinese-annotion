@@ -59,8 +59,9 @@ var (
 // is only used for necessary consensus checks. The legacy consensus engine can be any
 // engine implements the consensus interface (except the beacon itself).
 // 这里的信标是一个半功能的共识引擎，其部分功能仅用于必要的共识检查。遗留共识引擎可以是实现共识接口的任何引擎(信标本身除外)。
+// 信标引擎其实是个简化版的共识引擎，简化的意思是关于挖矿权选举、奖励相关的核心业务已经剥离了，这些放在共识层去做；另一方面，挖矿逻辑本身也更简单，因为只有验证者才能挖矿，所以不存在挖矿冲突（叔块）
 type Beacon struct {
-	ethone consensus.Engine // 仅包含eth1原始引擎，装饰模式 ethash or clique Original consensus engine used in eth1, e.g. ethash or clique
+	ethone consensus.Engine // 装饰模式，包含POW原始引擎，合并成信标用于兼容原来的引擎逻辑 ethash or clique Original consensus engine used in eth1, e.g. ethash or clique
 }
 
 // New creates a consensus engine with the given embedded eth1 engine.
@@ -74,7 +75,6 @@ func New(ethone consensus.Engine) *Beacon {
 
 // Author implements consensus.Engine, returning the verified author of the block.
 func (beacon *Beacon) Author(header *types.Header) (common.Address, error) {
-	//难度字段不为零，使用遗留引擎
 	if !beacon.IsPoSHeader(header) {
 		return beacon.ethone.Author(header)
 	}
@@ -84,6 +84,7 @@ func (beacon *Beacon) Author(header *types.Header) (common.Address, error) {
 
 // VerifyHeader checks whether a header conforms to the consensus rules of the
 // stock Ethereum consensus engine.
+// 信标引擎验证区块头：仅仅基于当前区块和父块的字段值进行简单验证（父块的时间和高度、信标区块头的常量字段、gas字段等），没有涉及其它区块或者网络调用
 func (beacon *Beacon) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header, seal bool) error {
 	//判断父区块的总体难度值是否超过配置值
 	reached, err := IsTTDReached(chain, header.ParentHash, header.Number.Uint64()-1)
@@ -96,14 +97,14 @@ func (beacon *Beacon) VerifyHeader(chain consensus.ChainHeaderReader, header *ty
 	}
 
 	// Short circuit if the parent is not known
-	//验证父区块已落库
+	// 验证父区块至少已落库
 	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
 	}
 
 	// Sanity checks passed, do a proper verification
-	//递归调用本方法：向前验证所有的区块头，直到遇到错误或者创世纪
+	//信标区块头的常量字段、父块的时间和高度等
 	return beacon.verifyHeader(chain, header, parent)
 }
 
@@ -225,6 +226,7 @@ func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers [
 
 // VerifyUncles verifies that the given block's uncles conform to the consensus
 // rules of the Ethereum consensus engine.
+// 信标引擎没有叔块，do nothing
 func (beacon *Beacon) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
 	if !beacon.IsPoSHeader(block.Header()) {
 		return beacon.ethone.VerifyUncles(chain, block)
@@ -294,6 +296,7 @@ func (beacon *Beacon) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 		return err
 	}
 	// Verify existence / non-existence of withdrawalsHash.
+	//仅上海升级后才有取款字段
 	shanghai := chain.Config().IsShanghai(header.Time)
 	if shanghai && header.WithdrawalsHash == nil {
 		return errors.New("missing withdrawalsHash")
@@ -302,6 +305,7 @@ func (beacon *Beacon) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 		return fmt.Errorf("invalid withdrawalsHash: have %x, expected nil", header.WithdrawalsHash)
 	}
 	// Verify the existence / non-existence of excessDataGas
+	//仅坎昆升级才有ExcessDataGas字段
 	cancun := chain.Config().IsCancun(header.Time)
 	if cancun && header.ExcessDataGas == nil {
 		return errors.New("missing excessDataGas")
@@ -353,9 +357,7 @@ func (beacon *Beacon) verifyHeaders(chain consensus.ChainHeaderReader, headers [
 	return abort, results
 }
 
-// Prepare implements consensus.Engine, initializing the difficulty field of a
-// header to conform to the beacon protocol. The changes are done inline.
-// Prepare实现共识引擎的方法，初始化报头的难度字段以符合信标协议
+// Prepare 信标引擎没有难度值，为常量0，如果父块的难度值到达配置难度，那用pow引擎计算难度值
 func (beacon *Beacon) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
 	// Transition isn't triggered yet, use the legacy rules for preparation.
 	reached, err := IsTTDReached(chain, header.ParentHash, header.Number.Uint64()-1)
@@ -366,17 +368,20 @@ func (beacon *Beacon) Prepare(chain consensus.ChainHeaderReader, header *types.H
 	if !reached {
 		return beacon.ethone.Prepare(chain, header)
 	}
+	//信标难值为度常量0
 	header.Difficulty = beaconDifficulty
 	return nil
 }
 
 // Finalize implements consensus.Engine and processes withdrawals on top.
+// 信标引擎仅仅处理取款业务，发放奖励放到了共识层（只有验证者才能挖矿和获取奖励），如果不是POS区块头，用POW的Finalize
 func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
 	if !beacon.IsPoSHeader(header) {
 		beacon.ethone.Finalize(chain, header, state, txs, uncles, nil)
 		return
 	}
 	// Withdrawals processing.
+	// 将取款金额转给取款账户
 	for _, w := range withdrawals {
 		// Convert amount from gwei to wei.
 		amount := new(big.Int).SetUint64(w.Amount)
@@ -389,10 +394,12 @@ func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.
 
 // FinalizeAndAssemble implements consensus.Engine, setting the final state and
 // assembling the block.
+// 处理取款 刷新区块头的状态树 组装区块
 func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, error) {
 	if !beacon.IsPoSHeader(header) {
 		return beacon.ethone.FinalizeAndAssemble(chain, header, state, txs, uncles, receipts, nil)
 	}
+	//仅上海升级之后才需要处理取款
 	shanghai := chain.Config().IsShanghai(header.Time)
 	if shanghai {
 		// All blocks after Shanghai must include a withdrawals root.
@@ -405,14 +412,16 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 		}
 	}
 	// Finalize and assemble the block.
+	//处理取款
+	//从工作量证明机制（PoW）转向了权益证明机制（PoS），网络开始使用验证者而不是矿工来添加区块到区块链中。验证者必须向链抵押 32 个 ETH，抵押和所有已获得的奖励将会被锁定，上海升级后可以提取
 	beacon.Finalize(chain, header, state, txs, uncles, withdrawals)
 
 	// Assign the final state root to header.
-	//计算并更新当前状态树的根哈希
+	//区块头的状态树根哈希刷到最新值
 	header.Root = state.IntermediateRoot(true)
 
 	// Assemble and return the final block.
-	//块头、交易列表、收据列表、退款列表，一堆stuff，组装成区块
+	// 区块头、交易列表、收据列表、退款列表，一堆stuff，组装成区块
 	return types.NewBlockWithWithdrawals(header, txs, uncles, receipts, withdrawals, trie.NewStackTrie(nil)), nil
 }
 
@@ -421,19 +430,22 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 //
 // Note, the method returns immediately and will send the result async. More
 // than one result may also be returned depending on the consensus algorithm.
+// 信标引擎不再使用POW机制挖矿，这里do nothing，挖矿业务交给验证者
 func (beacon *Beacon) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
 	if !beacon.IsPoSHeader(block.Header()) {
+		//POW 挖矿，阻塞等待挖矿结果
 		return beacon.ethone.Seal(chain, block, results, stop)
 	}
 	// The seal verification is done by the external consensus engine,
 	// return directly without pushing any block back. In another word
 	// beacon won't return any result by `results` channel which may
 	// blocks the receiver logic forever.
-	//验证由外部共识引擎完成，信标不会返回任何结果，这可能会永远阻塞接收器逻辑。
+	//验证由外部共识引擎完成，信标不会返回任何结果，这可能会永远阻塞接收器逻辑（POW挖矿成功会将结果发送给接收器）。
 	return nil
 }
 
 // SealHash returns the hash of a block prior to it being sealed.
+// 计算封印前的核心字段的哈希（封印后多出来几个字段）
 func (beacon *Beacon) SealHash(header *types.Header) common.Hash {
 	return beacon.ethone.SealHash(header)
 }
@@ -441,6 +453,7 @@ func (beacon *Beacon) SealHash(header *types.Header) common.Hash {
 // CalcDifficulty is the difficulty adjustment algorithm. It returns
 // the difficulty that a new block should have when created at time
 // given the parent block's time and difficulty.
+// 信标引擎不用计算难度值，直接返回常量
 func (beacon *Beacon) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	// Transition isn't triggered yet, use the legacy rules for calculation
 	if reached, _ := IsTTDReached(chain, parent.Hash(), parent.Number.Uint64()); !reached {

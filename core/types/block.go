@@ -76,17 +76,21 @@ type Header struct {
 	//收据树，通过Root和账户地址能找到对应的Receipt
 	ReceiptHash common.Hash `json:"receiptsRoot"     gencodec:"required"`
 	//日志索引集合
-	Bloom      Bloom    `json:"logsBloom"        gencodec:"required"`
+	Bloom Bloom `json:"logsBloom"        gencodec:"required"`
+	//POW的难度值
 	Difficulty *big.Int `json:"difficulty"       gencodec:"required"`
-	Number     *big.Int `json:"number"           gencodec:"required"`
+	//区块编号或区块高度
+	Number *big.Int `json:"number"           gencodec:"required"`
 	//当前块允许消耗的最大 gas 值
 	GasLimit uint64 `json:"gasLimit"         gencodec:"required"`
 	GasUsed  uint64 `json:"gasUsed"          gencodec:"required"`
 	//出块时间
-	Time      uint64      `json:"timestamp"        gencodec:"required"`
-	Extra     []byte      `json:"extraData"        gencodec:"required"`
+	Time  uint64 `json:"timestamp"        gencodec:"required"`
+	Extra []byte `json:"extraData"        gencodec:"required"`
+	//经过nonce计算而来的hash结果，满足难度要求
 	MixDigest common.Hash `json:"mixHash"`
-	Nonce     BlockNonce  `json:"nonce"`
+	//挖矿随机数
+	Nonce BlockNonce `json:"nonce"`
 
 	// BaseFee was added by EIP-1559 and is ignored in legacy headers.
 	BaseFee *big.Int `json:"baseFeePerGas" rlp:"optional"`

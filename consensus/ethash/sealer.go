@@ -48,6 +48,7 @@ var (
 
 // Seal implements consensus.Engine, attempting to find a nonce that satisfies
 // the block's difficulty requirements.
+// 试图找到一个nonce，满足块的难度要求
 func (ethash *Ethash) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
 	// If we're running a fake PoW, simply return a 0 nonce immediately
 	if ethash.config.PowMode == ModeFake || ethash.config.PowMode == ModeFullFake {
@@ -69,6 +70,7 @@ func (ethash *Ethash) Seal(chain consensus.ChainHeaderReader, block *types.Block
 
 	ethash.lock.Lock()
 	threads := ethash.threads
+	//初始化随机数
 	if ethash.rand == nil {
 		seed, err := crand.Int(crand.Reader, big.NewInt(math.MaxInt64))
 		if err != nil {
@@ -81,10 +83,10 @@ func (ethash *Ethash) Seal(chain consensus.ChainHeaderReader, block *types.Block
 	if threads == 0 {
 		threads = runtime.NumCPU()
 	}
-	if threads < 0 {
+	if threads < 0 { //禁用本地挖掘
 		threads = 0 // Allows disabling local mining without extra logic around local/remote
 	}
-	// Push new work to remote sealer
+	// Push new work to remote sealer 把新区块发给封装者
 	if ethash.remote != nil {
 		ethash.remote.workCh <- &sealTask{block: block, results: results}
 	}
@@ -92,10 +94,12 @@ func (ethash *Ethash) Seal(chain consensus.ChainHeaderReader, block *types.Block
 		pend   sync.WaitGroup
 		locals = make(chan *types.Block)
 	)
+	//多线程挖矿
 	for i := 0; i < threads; i++ {
 		pend.Add(1)
 		go func(id int, nonce uint64) {
 			defer pend.Done()
+			//执行挖矿
 			ethash.mine(block, id, nonce, abort, locals)
 		}(i, uint64(ethash.rand.Int63()))
 	}
@@ -106,7 +110,7 @@ func (ethash *Ethash) Seal(chain consensus.ChainHeaderReader, block *types.Block
 		case <-stop:
 			// Outside abort, stop all miner threads
 			close(abort)
-		case result = <-locals:
+		case result = <-locals: //ethash.mine 的挖矿结果
 			// One of the threads found a block, abort all others
 			select {
 			case results <- result:
@@ -129,6 +133,7 @@ func (ethash *Ethash) Seal(chain consensus.ChainHeaderReader, block *types.Block
 
 // mine is the actual proof-of-work miner that searches for a nonce starting from
 // seed that results in correct final block difficulty.
+// 实际的工作量证明矿工，它从种子开始搜索nonce，从而产生正确的最终区块难度
 func (ethash *Ethash) mine(block *types.Block, id int, seed uint64, abort chan struct{}, found chan *types.Block) {
 	// Extract some data from the header
 	var (
@@ -157,20 +162,26 @@ search:
 
 		default:
 			// We don't have to update hash rate on every nonce, so update after after 2^X nonces
+			//我们不需要在每次随机数上更新哈希率，所以在2^X次随机数之后更新
 			attempts++
+			//2^15
 			if (attempts % (1 << 15)) == 0 {
 				ethash.hashrate.Mark(attempts)
 				attempts = 0
 			}
 			// Compute the PoW value of this nonce
+			// 哈希值 digest = crypto.Keccak256(append(seed, result...))
 			digest, result := hashimotoFull(dataset.dataset, hash, nonce)
+			//哈希结果 <= target(2^256 / difficulty )
 			if powBuffer.SetBytes(result).Cmp(target) <= 0 {
 				// Correct nonce found, create a new header with it
+				//挖矿成功，创建新的区块头
 				header = types.CopyHeader(header)
 				header.Nonce = types.EncodeNonce(nonce)
 				header.MixDigest = common.BytesToHash(digest)
 
 				// Seal and return a block (if still needed)
+				//seal 就是把代表区块最终状态的header装进区块里
 				select {
 				case found <- block.WithSeal(header):
 					logger.Trace("Ethash nonce found and reported", "attempts", nonce-seed, "nonce", nonce)
@@ -201,7 +212,7 @@ type remoteSealer struct {
 
 	ethash       *Ethash
 	noverify     bool
-	notifyURLs   []string
+	notifyURLs   []string //远程矿工的地址
 	results      chan<- *types.Block
 	workCh       chan *sealTask   // Notification channel to push new work and relative result channel to remote sealer
 	fetchWorkCh  chan *sealWork   // Channel used for remote sealer to fetch mining work
@@ -277,7 +288,7 @@ func (s *remoteSealer) loop() {
 
 	for {
 		select {
-		case work := <-s.workCh:
+		case work := <-s.workCh: //接收到新区块
 			// Update current work with new received block.
 			// Note same work can be past twice, happens when changing CPU threads.
 			s.results = work.results
@@ -401,6 +412,7 @@ func (s *remoteSealer) sendNotification(ctx context.Context, url string, json []
 // submitWork verifies the submitted pow solution, returning
 // whether the solution was accepted or not (not can be both a bad pow as well as
 // any other error, like no pending work or stale mining result).
+// 验证提交的pow解决方案，返回解决方案是否被接受(not既可以是坏的pow，也可以是任何其他错误，比如没有待处理的工作或过时的挖掘结果)。
 func (s *remoteSealer) submitWork(nonce types.BlockNonce, mixDigest common.Hash, sealhash common.Hash) bool {
 	if s.currentBlock == nil {
 		s.ethash.config.Log.Error("Pending work without block", "sealhash", sealhash)
@@ -414,6 +426,7 @@ func (s *remoteSealer) submitWork(nonce types.BlockNonce, mixDigest common.Hash,
 	}
 	// Verify the correctness of submitted result.
 	header := block.Header()
+	//挖矿结果
 	header.Nonce = nonce
 	header.MixDigest = mixDigest
 

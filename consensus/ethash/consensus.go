@@ -39,9 +39,9 @@ import (
 
 // Ethash proof-of-work protocol constants.
 var (
-	FrontierBlockReward           = big.NewInt(5e+18) // Block reward in wei for successfully mining a block
-	ByzantiumBlockReward          = big.NewInt(3e+18) // Block reward in wei for successfully mining a block upward from Byzantium
-	ConstantinopleBlockReward     = big.NewInt(2e+18) // Block reward in wei for successfully mining a block upward from Constantinople
+	FrontierBlockReward           = big.NewInt(5e+18) // 5个以太 Block reward in wei for successfully mining a block
+	ByzantiumBlockReward          = big.NewInt(3e+18) // 3个以太 Block reward in wei for successfully mining a block upward from Byzantium
+	ConstantinopleBlockReward     = big.NewInt(2e+18) // 2个以太 Block reward in wei for successfully mining a block upward from Constantinople
 	maxUncles                     = 2                 // Maximum number of uncles allowed in a single block
 	allowedFutureBlockTimeSeconds = int64(15)         // Max seconds from current time allowed for blocks, before they're considered future blocks
 
@@ -332,6 +332,7 @@ func (ethash *Ethash) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 // CalcDifficulty is the difficulty adjustment algorithm. It returns
 // the difficulty that a new block should have when created at time
 // given the parent block's time and difficulty.
+// CalcDifficulty是难度调整算法。它返回在给定父块的时间和难度的情况下创建新块时应该具有的难度
 func (ethash *Ethash) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	return CalcDifficulty(chain.Config(), time, parent)
 }
@@ -524,6 +525,7 @@ var DynamicDifficultyCalculator = makeDifficultyCalculator
 // verifySeal checks whether a block satisfies the PoW difficulty requirements,
 // either using the usual ethash cache for it, or alternatively using a full DAG
 // to make remote mining fast.
+// 检查一个区块是否满足PoW难度要求，要么使用通常的ethash缓存，要么使用完整的DAG来快速进行远程挖掘
 func (ethash *Ethash) verifySeal(chain consensus.ChainHeaderReader, header *types.Header, fulldag bool) error {
 	// If we're running a fake PoW, accept any seal as valid
 	if ethash.config.PowMode == ModeFake || ethash.config.PowMode == ModeFullFake {
@@ -549,20 +551,25 @@ func (ethash *Ethash) verifySeal(chain consensus.ChainHeaderReader, header *type
 		result []byte
 	)
 	// If fast-but-heavy PoW verification was requested, use an ethash dataset
+	//如果需要快速但繁重的PoW验证，使用ethash数据集
 	if fulldag {
 		dataset := ethash.dataset(number, true)
 		if dataset.generated() {
+			//重新计算的hash值
 			digest, result = hashimotoFull(dataset.dataset, ethash.SealHash(header).Bytes(), header.Nonce.Uint64())
 
 			// Datasets are unmapped in a finalizer. Ensure that the dataset stays alive
 			// until after the call to hashimotoFull so it's not unmapped while being used.
+			//数据集在终结器中被取消映射。确保数据集在调用hashimotoFull之后保持存活，这样它在使用时就不会被取消映射。
 			runtime.KeepAlive(dataset)
 		} else {
 			// Dataset not yet generated, don't hang, use a cache instead
+			//数据集尚未生成，不要挂起，使用缓存代替
 			fulldag = false
 		}
 	}
 	// If slow-but-light PoW verification was requested (or DAG not yet ready), use an ethash cache
+	//如果请求慢但轻的PoW验证(或DAG尚未准备好)，请使用以太缓存
 	if !fulldag {
 		cache := ethash.cache(number)
 
@@ -570,6 +577,7 @@ func (ethash *Ethash) verifySeal(chain consensus.ChainHeaderReader, header *type
 		if ethash.config.PowMode == ModeTest {
 			size = 32 * 1024
 		}
+		//重新计算的hash值
 		digest, result = hashimotoLight(size, cache.cache, ethash.SealHash(header).Bytes(), header.Nonce.Uint64())
 
 		// Caches are unmapped in a finalizer. Ensure that the cache stays alive
@@ -577,6 +585,7 @@ func (ethash *Ethash) verifySeal(chain consensus.ChainHeaderReader, header *type
 		runtime.KeepAlive(cache)
 	}
 	// Verify the calculated values against the ones provided in the header
+	//对比区块头中的hash值与重新计算的hash值
 	if !bytes.Equal(header.MixDigest[:], digest) {
 		return errInvalidMixDigest
 	}
@@ -589,16 +598,20 @@ func (ethash *Ethash) verifySeal(chain consensus.ChainHeaderReader, header *type
 
 // Prepare implements consensus.Engine, initializing the difficulty field of a
 // header to conform to the ethash protocol. The changes are done inline.
+// 初始化当前块挖矿难度值
 func (ethash *Ethash) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
+	//查询父块
 	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
 	}
+	//父块的时间和难度计算当前块的挖矿难度
 	header.Difficulty = ethash.CalcDifficulty(chain, header.Time, parent)
 	return nil
 }
 
 // Finalize implements consensus.Engine, accumulating the block and uncle rewards.
+// 计算挖矿和叔块奖励，并给账户加币
 func (ethash *Ethash) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
 	// Accumulate any block and uncle rewards
 	accumulateRewards(chain.Config(), state, header, uncles)
@@ -611,16 +624,19 @@ func (ethash *Ethash) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 		return nil, errors.New("ethash does not support withdrawals")
 	}
 	// Finalize block
+	//计算挖矿和叔块奖励，并给账户加币
 	ethash.Finalize(chain, header, state, txs, uncles, nil)
 
 	// Assign the final state root to header.
+	//计算状态树的当前根哈希值
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 
-	// Header seems complete, assemble into a block and return
+	// 组装区块 Header seems complete, assemble into a block and return
 	return types.NewBlock(header, txs, uncles, receipts, trie.NewStackTrie(nil)), nil
 }
 
 // SealHash returns the hash of a block prior to it being sealed.
+// 计算被封印前的hash，也就是不包含封印结果字段的区块头字段
 func (ethash *Ethash) SealHash(header *types.Header) (hash common.Hash) {
 	hasher := sha3.NewLegacyKeccak256()
 
@@ -659,6 +675,7 @@ var (
 // AccumulateRewards credits the coinbase of the given block with the mining
 // reward. The total reward consists of the static block reward and rewards for
 // included uncles. The coinbase of each uncle block is also rewarded.
+// 将挖矿奖励记入给定区块的coinbase。总奖励包括静态区块奖励和叔块的奖励。
 func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header *types.Header, uncles []*types.Header) {
 	// Select the correct block reward based on chain progression
 	blockReward := FrontierBlockReward
@@ -669,6 +686,7 @@ func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header 
 		blockReward = ConstantinopleBlockReward
 	}
 	// Accumulate the rewards for the miner and any included uncles
+	//矿工直接奖励
 	reward := new(big.Int).Set(blockReward)
 	r := new(big.Int)
 	for _, uncle := range uncles {
@@ -676,10 +694,13 @@ func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header 
 		r.Sub(r, header.Number)
 		r.Mul(r, blockReward)
 		r.Div(r, big8)
+		//给叔块账户加币
 		state.AddBalance(uncle.Coinbase, r)
 
 		r.Div(blockReward, big32)
+		//给矿工一份叔块的奖励，鼓励矿工吸收叔块
 		reward.Add(reward, r)
 	}
+	//给矿工账户加币
 	state.AddBalance(header.Coinbase, reward)
 }
